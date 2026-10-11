@@ -51,6 +51,7 @@ public class MainActivity extends Activity {
     private WebView webView;
     private ValueCallback<Uri[]> filePathCallback;
     private String currentDocumentName = null;
+    private TextView fab;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -69,8 +70,8 @@ public class MainActivity extends Activity {
         ));
         rootLayout.addView(webView);
 
-        // Floating Action Button "📂 Pilih PDF"
-        TextView fab = createFabButton();
+        // Floating Action Button "📂 Pilih PDF" (ditampilkan saat belum ada dokumen)
+        fab = createFabButton();
         rootLayout.addView(fab);
 
         setContentView(rootLayout);
@@ -300,6 +301,9 @@ public class MainActivity extends Activity {
             String url = BASE_URL + "?file=/doc/" + encodedName + "&t=" + System.currentTimeMillis();
             if (webView != null) {
                 webView.loadUrl(url);
+                if (fab != null) {
+                    fab.setVisibility(View.GONE);
+                }
                 Toast.makeText(this, "Membuka PDF: " + name, Toast.LENGTH_SHORT).show();
             }
         } catch (Exception e) {
@@ -383,6 +387,9 @@ public class MainActivity extends Activity {
     public void onBackPressed() {
         if (webView != null && webView.canGoBack()) {
             webView.goBack();
+            if (fab != null) {
+                fab.setVisibility(View.VISIBLE);
+            }
         } else {
             super.onBackPressed();
         }
