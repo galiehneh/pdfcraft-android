@@ -1,16 +1,23 @@
 package com.galiehneh.pdfcraft;
 
 import android.app.Activity;
+import android.content.ActivityNotFoundException;
 import android.content.ContentResolver;
 import android.content.ContentValues;
 import android.content.Intent;
+import android.database.Cursor;
+import android.graphics.Color;
+import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
 import android.provider.MediaStore;
+import android.provider.OpenableColumns;
 import android.util.Base64;
 import android.util.Log;
+import android.util.TypedValue;
+import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.webkit.JavascriptInterface;
@@ -21,9 +28,12 @@ import android.webkit.WebResourceResponse;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.widget.FrameLayout;
+import android.widget.TextView;
 import android.widget.Toast;
 
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -34,30 +44,100 @@ import java.util.Map;
 
 public class MainActivity extends Activity {
     private static final String TAG = "PdfCraft";
-    private static final String APP_URL = "https://appassets.androidplatform.net/index.html";
+    private static final String BASE_URL = "https://appassets.androidplatform.net/index.html";
     private static final int FILE_CHOOSER_REQUEST = 1001;
+    private static final int DIRECT_PICKER_REQUEST = 1002;
 
     private WebView webView;
     private ValueCallback<Uri[]> filePathCallback;
+    private String currentDocumentName = null;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        webView = new WebView(this);
-        webView.setLayoutParams(new ViewGroup.LayoutParams(
+        FrameLayout rootLayout = new FrameLayout(this);
+        rootLayout.setLayoutParams(new ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT
         ));
-        setContentView(webView);
+
+        webView = new WebView(this);
+        webView.setLayoutParams(new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+        ));
+        rootLayout.addView(webView);
+
+        // Floating Action Button "📂 Pilih PDF"
+        TextView fab = createFabButton();
+        rootLayout.addView(fab);
+
+        setContentView(rootLayout);
 
         configureWebView();
 
-        if (savedInstanceState == null) {
-            webView.loadUrl(APP_URL);
+        Intent intent = getIntent();
+        if (intent != null && hasPdfAction(intent)) {
+            handleIncomingIntent(intent);
+        } else if (savedInstanceState == null) {
+            webView.loadUrl(BASE_URL);
         } else {
             webView.restoreState(savedInstanceState);
         }
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        if (intent != null && hasPdfAction(intent)) {
+            handleIncomingIntent(intent);
+        }
+    }
+
+    private boolean hasPdfAction(Intent intent) {
+        String action = intent.getAction();
+        return Intent.ACTION_VIEW.equals(action) || Intent.ACTION_SEND.equals(action);
+    }
+
+    private TextView createFabButton() {
+        TextView fab = new TextView(this);
+        fab.setText("📂 Buka PDF");
+        fab.setTextColor(Color.WHITE);
+        fab.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
+        fab.setTypeface(null, android.graphics.Typeface.BOLD);
+
+        int padH = dpToPx(16);
+        int padV = dpToPx(12);
+        fab.setPadding(padH, padV, padH, padV);
+
+        GradientDrawable bg = new GradientDrawable();
+        bg.setColor(0xFF0A7563); // ArtCraft teal
+        bg.setCornerRadius(dpToPx(24));
+        fab.setBackground(bg);
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            fab.setElevation(dpToPx(6));
+        }
+
+        FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+        );
+        params.gravity = Gravity.BOTTOM | Gravity.END;
+        params.bottomMargin = dpToPx(24);
+        params.rightMargin = dpToPx(24);
+        fab.setLayoutParams(params);
+
+        fab.setOnClickListener(v -> openDirectPdfPicker());
+        return fab;
+    }
+
+    private int dpToPx(int dp) {
+        return Math.round(TypedValue.applyDimension(
+                TypedValue.COMPLEX_UNIT_DIP, dp, getResources().getDisplayMetrics()
+        ));
     }
 
     private void configureWebView() {
@@ -90,6 +170,23 @@ public class MainActivity extends Activity {
                     if (path == null || path.isEmpty() || path.equals("/")) {
                         path = "/index.html";
                     }
+
+                    // Intercept incoming / current document PDF
+                    if (path.startsWith("/doc/") || "/current_document.pdf".equalsIgnoreCase(path)) {
+                        File cachedFile = new File(getCacheDir(), "current_document.pdf");
+                        if (cachedFile.exists()) {
+                            try {
+                                InputStream is = new FileInputStream(cachedFile);
+                                Map<String, String> headers = new HashMap<>();
+                                headers.put("Access-Control-Allow-Origin", "*");
+                                headers.put("Cache-Control", "no-cache");
+                                return new WebResourceResponse("application/pdf", "UTF-8", 200, "OK", headers, is);
+                            } catch (IOException e) {
+                                Log.e(TAG, "Cannot stream cached PDF", e);
+                            }
+                        }
+                    }
+
                     if (path.startsWith("/")) {
                         path = path.substring(1);
                     }
@@ -117,28 +214,125 @@ public class MainActivity extends Activity {
                 }
                 filePathCallback = callback;
 
-                Intent intent = new Intent(Intent.ACTION_GET_CONTENT);
+                Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
                 intent.addCategory(Intent.CATEGORY_OPENABLE);
-                intent.setType("*/*");
-                if (params != null && params.getAcceptTypes() != null && params.getAcceptTypes().length > 0) {
-                    String accept = params.getAcceptTypes()[0];
-                    if (accept != null && !accept.trim().isEmpty() && !accept.equals("*/*")) {
-                        intent.setType(accept);
-                    }
+                intent.setType("application/pdf");
+
+                if (params != null && params.getMode() == FileChooserParams.MODE_OPEN_MULTIPLE) {
+                    intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
                 }
+
                 try {
-                    startActivityForResult(Intent.createChooser(intent, "Pilih Dokumen PDF"), FILE_CHOOSER_REQUEST);
-                } catch (Exception e) {
-                    Log.e(TAG, "Cannot launch file chooser", e);
-                    if (filePathCallback != null) {
-                        filePathCallback.onReceiveValue(null);
-                        filePathCallback = null;
+                    startActivityForResult(intent, FILE_CHOOSER_REQUEST);
+                } catch (ActivityNotFoundException e) {
+                    try {
+                        Intent fallback = new Intent(Intent.ACTION_GET_CONTENT);
+                        fallback.addCategory(Intent.CATEGORY_OPENABLE);
+                        fallback.setType("application/pdf");
+                        startActivityForResult(Intent.createChooser(fallback, "Pilih Dokumen PDF"), FILE_CHOOSER_REQUEST);
+                    } catch (Exception ex) {
+                        Log.e(TAG, "Cannot launch file chooser", ex);
+                        if (filePathCallback != null) {
+                            filePathCallback.onReceiveValue(null);
+                            filePathCallback = null;
+                        }
+                        return false;
                     }
-                    return false;
                 }
                 return true;
             }
         });
+    }
+
+    private void openDirectPdfPicker() {
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("application/pdf");
+        try {
+            startActivityForResult(intent, DIRECT_PICKER_REQUEST);
+        } catch (ActivityNotFoundException e) {
+            try {
+                Intent fallback = new Intent(Intent.ACTION_GET_CONTENT);
+                fallback.addCategory(Intent.CATEGORY_OPENABLE);
+                fallback.setType("application/pdf");
+                startActivityForResult(Intent.createChooser(fallback, "Pilih Dokumen PDF"), DIRECT_PICKER_REQUEST);
+            } catch (Exception ex) {
+                Toast.makeText(this, "Tidak ada aplikasi pemilih berkas", Toast.LENGTH_SHORT).show();
+            }
+        }
+    }
+
+    private void handleIncomingIntent(Intent intent) {
+        Uri targetUri = null;
+        String action = intent.getAction();
+
+        if (Intent.ACTION_VIEW.equals(action)) {
+            targetUri = intent.getData();
+        } else if (Intent.ACTION_SEND.equals(action)) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                targetUri = intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri.class);
+            } else {
+                targetUri = (Uri) intent.getParcelableExtra(Intent.EXTRA_STREAM);
+            }
+        }
+
+        if (targetUri != null) {
+            handlePdfUri(targetUri);
+        }
+    }
+
+    private void handlePdfUri(Uri uri) {
+        try {
+            String name = getFileNameFromUri(uri);
+            this.currentDocumentName = name;
+
+            File dest = new File(getCacheDir(), "current_document.pdf");
+            try (InputStream is = getContentResolver().openInputStream(uri);
+                 FileOutputStream fos = new FileOutputStream(dest)) {
+                byte[] buffer = new byte[32768];
+                int read;
+                while ((read = is.read(buffer)) != -1) {
+                    fos.write(buffer, 0, read);
+                }
+            }
+
+            String encodedName = Uri.encode(name);
+            String url = BASE_URL + "?file=/doc/" + encodedName + "&t=" + System.currentTimeMillis();
+            if (webView != null) {
+                webView.loadUrl(url);
+                Toast.makeText(this, "Membuka PDF: " + name, Toast.LENGTH_SHORT).show();
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error handling PDF URI: " + uri, e);
+            Toast.makeText(this, "Gagal memproses berkas PDF", Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    private String getFileNameFromUri(Uri uri) {
+        String result = "document.pdf";
+        if (uri == null) return result;
+        if ("content".equalsIgnoreCase(uri.getScheme())) {
+            try (Cursor cursor = getContentResolver().query(uri, null, null, null, null)) {
+                if (cursor != null && cursor.moveToFirst()) {
+                    int nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME);
+                    if (nameIndex != -1) {
+                        String name = cursor.getString(nameIndex);
+                        if (name != null && !name.trim().isEmpty()) {
+                            result = name;
+                        }
+                    }
+                }
+            } catch (Exception ignored) {}
+        } else {
+            String path = uri.getPath();
+            if (path != null) {
+                int cut = path.lastIndexOf('/');
+                if (cut != -1) {
+                    result = path.substring(cut + 1);
+                }
+            }
+        }
+        return result;
     }
 
     private String getMimeType(String path) {
@@ -174,6 +368,13 @@ public class MainActivity extends Activity {
                 }
                 filePathCallback.onReceiveValue(results);
                 filePathCallback = null;
+            }
+        } else if (requestCode == DIRECT_PICKER_REQUEST) {
+            if (resultCode == RESULT_OK && data != null) {
+                Uri uri = data.getData();
+                if (uri != null) {
+                    handlePdfUri(uri);
+                }
             }
         }
     }
