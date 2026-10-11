@@ -62,6 +62,7 @@ public class MainActivity extends Activity {
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT
         ));
+        applyWindowInsets(rootLayout);
 
         webView = new WebView(this);
         webView.setLayoutParams(new FrameLayout.LayoutParams(
@@ -109,17 +110,17 @@ public class MainActivity extends Activity {
         fab.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
         fab.setTypeface(null, android.graphics.Typeface.BOLD);
 
-        int padH = dpToPx(16);
-        int padV = dpToPx(12);
+        int padH = dpToPx(18);
+        int padV = dpToPx(14);
         fab.setPadding(padH, padV, padH, padV);
 
         GradientDrawable bg = new GradientDrawable();
         bg.setColor(0xFF0A7563); // ArtCraft teal
-        bg.setCornerRadius(dpToPx(24));
+        bg.setCornerRadius(dpToPx(28));
         fab.setBackground(bg);
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-            fab.setElevation(dpToPx(6));
+            fab.setElevation(dpToPx(8));
         }
 
         FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(
@@ -128,11 +129,43 @@ public class MainActivity extends Activity {
         );
         params.gravity = Gravity.BOTTOM | Gravity.END;
         params.bottomMargin = dpToPx(24);
-        params.rightMargin = dpToPx(24);
+        params.rightMargin = dpToPx(20);
         fab.setLayoutParams(params);
 
         fab.setOnClickListener(v -> openDirectPdfPicker());
         return fab;
+    }
+
+    private void applyWindowInsets(View view) {
+        final int navHeight = getNavigationBarHeight();
+        view.setPadding(0, 0, 0, navHeight);
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            view.setOnApplyWindowInsetsListener((v, insets) -> {
+                android.graphics.Insets bars = insets.getInsets(
+                        android.view.WindowInsets.Type.navigationBars() | android.view.WindowInsets.Type.displayCutout()
+                );
+                int bottom = bars.bottom > 0 ? bars.bottom : navHeight;
+                v.setPadding(bars.left, 0, bars.right, bottom);
+                return insets;
+            });
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT_WATCH) {
+            view.setOnApplyWindowInsetsListener((v, insets) -> {
+                int left = insets.getSystemWindowInsetLeft();
+                int right = insets.getSystemWindowInsetRight();
+                int bottom = insets.getSystemWindowInsetBottom();
+                v.setPadding(left, 0, right, bottom > 0 ? bottom : navHeight);
+                return insets;
+            });
+        }
+    }
+
+    private int getNavigationBarHeight() {
+        int resId = getResources().getIdentifier("navigation_bar_height", "dimen", "android");
+        if (resId > 0) {
+            return getResources().getDimensionPixelSize(resId);
+        }
+        return dpToPx(48);
     }
 
     private int dpToPx(int dp) {
@@ -360,6 +393,9 @@ public class MainActivity extends Activity {
             if (filePathCallback != null) {
                 Uri[] results = null;
                 if (resultCode == RESULT_OK && data != null) {
+                    if (fab != null) {
+                        fab.setVisibility(View.GONE);
+                    }
                     if (data.getData() != null) {
                         results = new Uri[]{data.getData()};
                     } else if (data.getClipData() != null) {
