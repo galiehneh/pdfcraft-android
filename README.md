@@ -35,10 +35,21 @@ Porting & Packaging dari [storytold/pdfcraft](https://github.com/storytold/pdfcr
 ## Spesifikasi Build
 
 - **Application ID:** `com.galiehneh.pdfcraft`
-- **Version Name:** `2026.10.11`
-- **Version Code:** `20261011`
+- **Version Name:** `2026.10.13`
+- **Version Code:** `20261015`
 - **Minimum SDK:** Android 7.0 (API 24)
 - **Target SDK:** Android 15 (API 35)
+
+---
+
+## Fitur Mobile Friendly (Appllama Design Benchmark)
+
+- **Responsive Mobile Layout:** Adaptif pada layar ponsel (< 680px), menyembunyikan dual toolbar desktop yang memakan ruang.
+- **Top App Bar & Smart Navigation:** Header ringkas dengan tombol kembali ke beranda, pencarian terintegrasi, dan menu popover tanpa emoji.
+- **Bottom Navigation & Quick Tools Ribbon:** Kontrol halaman di bagian bawah ibu jari, rotasi cepat, toggle zoom *Fit-to-Width*, serta pita alat anotasi horizontal (Highlight, Note, Draw, Fill & Sign).
+- **Responsive Home & Empty State:** Tombol buka berkas besar (min. target sentuh 48px), grid kartu peralatan 2-kolom, dan tampilan status riwayat berkas yang informatif.
+- **Viewport Modal Clamping:** Seluruh dialog modal (Properties, Password, About) dibatasi agar tidak meluap ke luar layar.
+- **Android System Integration:** Penanganan tombol *Hardware Back* Android yang intuitif (menutup dokumen/kembali ke Beranda sebelum keluar aplikasi) dan integrasi getar haptik.
 
 ---
 

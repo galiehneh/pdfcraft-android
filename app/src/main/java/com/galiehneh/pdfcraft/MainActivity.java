@@ -105,12 +105,12 @@ public class MainActivity extends Activity {
 
     private TextView createFabButton() {
         TextView fab = new TextView(this);
-        fab.setText("📂 Buka PDF");
+        fab.setText("Buka PDF");
         fab.setTextColor(Color.WHITE);
         fab.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
         fab.setTypeface(null, android.graphics.Typeface.BOLD);
 
-        int padH = dpToPx(18);
+        int padH = dpToPx(20);
         int padV = dpToPx(14);
         fab.setPadding(padH, padV, padH, padV);
 
@@ -132,7 +132,12 @@ public class MainActivity extends Activity {
         params.rightMargin = dpToPx(20);
         fab.setLayoutParams(params);
 
-        fab.setOnClickListener(v -> openDirectPdfPicker());
+        fab.setClickable(true);
+        fab.setFocusable(true);
+        fab.setOnClickListener(v -> {
+            v.performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY);
+            openDirectPdfPicker();
+        });
         return fab;
     }
 
@@ -337,6 +342,7 @@ public class MainActivity extends Activity {
                 if (fab != null) {
                     fab.setVisibility(View.GONE);
                 }
+                getWindow().getDecorView().performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY);
                 Toast.makeText(this, "Membuka PDF: " + name, Toast.LENGTH_SHORT).show();
             }
         } catch (Exception e) {
@@ -421,14 +427,27 @@ public class MainActivity extends Activity {
 
     @Override
     public void onBackPressed() {
+        if (webView != null) {
+            webView.evaluateJavascript("window.handleAndroidBack && window.handleAndroidBack();", null);
+        }
+        if (fab != null && fab.getVisibility() == View.GONE) {
+            // Currently viewing a document; return to home
+            fab.setVisibility(View.VISIBLE);
+            this.currentDocumentName = null;
+            if (webView != null) {
+                webView.loadUrl(BASE_URL);
+            }
+            Toast.makeText(this, "Kembali ke Beranda", Toast.LENGTH_SHORT).show();
+            return;
+        }
         if (webView != null && webView.canGoBack()) {
             webView.goBack();
             if (fab != null) {
                 fab.setVisibility(View.VISIBLE);
             }
-        } else {
-            super.onBackPressed();
+            return;
         }
+        super.onBackPressed();
     }
 
     @Override
@@ -450,6 +469,7 @@ public class MainActivity extends Activity {
                 boolean saved = saveFileToDownloads(safeName, bytes);
                 runOnUiThread(() -> {
                     if (saved) {
+                        getWindow().getDecorView().performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS);
                         Toast.makeText(MainActivity.this, "Berhasil disimpan ke Download: " + safeName, Toast.LENGTH_LONG).show();
                     } else {
                         Toast.makeText(MainActivity.this, "Gagal menyimpan berkas", Toast.LENGTH_SHORT).show();
