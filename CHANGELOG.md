@@ -4,6 +4,20 @@ Semua perubahan penting pada proyek **PdfCraft Android** didokumentasikan dalam 
 
 ---
 
+## [2026.10.13.2] - 2026-10-13
+
+### Sinkronisasi Upstream v0.7.1 & Pembaruan Engine
+- **Upstream Engine Parity (v0.7.1):**
+  - Mengintegrasikan pembaruan core engine dari rilis resmi `storytold/pdfcraft` v0.7.1 (225+ perbaikan dan optimasi upstream).
+  - Peningkatan kestabilan rendering dokumen kompleks dan cache tile decodes.
+  - Perbaikan penanganan metadata, font encoding, dan keamanan verifikasi signature.
+  - Adaptasi arsitektur `PageLayout` & `continuous` flag baru dari upstream tanpa mengubah UX mobile.
+- **Mobile Layout & Wrapper Preservation:**
+  - Tetap mempertahankan 100% tata letak mobile Appllama: Single-Page Stretch (Edge-to-Edge tanpa gutter), Responsive Home (hero CTA besar & 2-column quick tools), Bottom Navigation Bar, dan Floating Annotation Ribbon.
+  - Integrasi native Android Storage Access Framework (SAF), MediaStore download bridge, dan window insets navigation bar tetap aktif.
+
+---
+
 ## [2026.10.13.1] - 2026-10-13
 
 ### Fitur Baru & Peningkatan Mobile View
