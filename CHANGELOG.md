@@ -4,6 +4,14 @@ Semua perubahan penting pada proyek **PdfCraft Android** didokumentasikan dalam 
 
 ---
 
+## [2026.10.13.3] - 2026-10-14
+
+### Perbaikan
+- **Menu seleksi teks (mobile):** di layar ponsel menu kini ringkas (Salin, Sorot, Komentar), diletakkan di atas baris terpilih dengan jarak aman dan dibatasi dalam layar, sehingga tidak menutupi teks maupun terpotong. Tombol Salin menyalin teks lalu menghapus seleksi.
+- **Zoom/pinch lambat:** raster tajam ditahan untuk semua halaman selama gestur zoom di ponsel (tekstur lama diregangkan, raster baru dibuat setelah gestur selesai), dan kepadatan raster WASM dibatasi 2.0x agar tidak memproses puluhan megapiksel.
+
+---
+
 ## [2026.10.13.2] - 2026-10-13
 
 ### Sinkronisasi Upstream v0.7.1 & Pembaruan Engine

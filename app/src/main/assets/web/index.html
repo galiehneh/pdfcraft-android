@@ -6,8 +6,8 @@
     <title>PdfCraft</title>
     
 <script type="module">
-import init, * as bindings from './pdfcraft-web-4b8addadaf194d9f.js';
-const wasm = await init({ module_or_path: './pdfcraft-web-4b8addadaf194d9f_bg.wasm' });
+import init, * as bindings from './pdfcraft-web-1bd04f048a5f9e2e.js';
+const wasm = await init({ module_or_path: './pdfcraft-web-1bd04f048a5f9e2e_bg.wasm' });
 
 window.wasmBindings = bindings;
 
@@ -56,7 +56,7 @@ dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
       canvas { width: 100%; height: 100%; display: block; outline: none; }
       @media (prefers-color-scheme: dark) { html, body { background: #19191c; } }
     </style>
-  <link rel="modulepreload" href="./pdfcraft-web-4b8addadaf194d9f.js" crossorigin="anonymous" integrity="sha384-H+wGtt/h4WBgDWjorME0YcZb0Zc0ZGLfTstvnpiaStvsuzMvI/gw6F4bmbLP04Z6"><link rel="preload" href="./pdfcraft-web-4b8addadaf194d9f_bg.wasm" crossorigin="anonymous" integrity="sha384-2dA3et49ZVVXHl1c/VSpp4xW+BFuZX86ryUzFAonYRS8exAp3eh3u/2ZAZg4yFeY" as="fetch" type="application/wasm"></head>
+  <link rel="modulepreload" href="./pdfcraft-web-1bd04f048a5f9e2e.js" crossorigin="anonymous" integrity="sha384-H+wGtt/h4WBgDWjorME0YcZb0Zc0ZGLfTstvnpiaStvsuzMvI/gw6F4bmbLP04Z6"><link rel="preload" href="./pdfcraft-web-1bd04f048a5f9e2e_bg.wasm" crossorigin="anonymous" integrity="sha384-zJcAhmaupJgWmS8OznSJp8ymGSD2NqRAsSP7EFrDKetB+ABU+iPay2D/OijLG0Qh" as="fetch" type="application/wasm"></head>
   <body>
     <canvas id="pdfcraft"></canvas>
   </body>

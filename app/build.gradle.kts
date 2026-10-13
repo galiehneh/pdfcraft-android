@@ -20,8 +20,8 @@ android {
         applicationId = "com.galiehneh.pdfcraft"
         minSdk = 24
         targetSdk = 35
-        versionCode = 20261017
-        versionName = "2026.10.13.2"
+        versionCode = 20261018
+        versionName = "2026.10.13.3"
     }
 
     signingConfigs {
