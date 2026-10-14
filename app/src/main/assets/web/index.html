@@ -6,8 +6,8 @@
     <title>PdfCraft</title>
     
 <script type="module">
-import init, * as bindings from './pdfcraft-web-1bd04f048a5f9e2e.js';
-const wasm = await init({ module_or_path: './pdfcraft-web-1bd04f048a5f9e2e_bg.wasm' });
+import init, * as bindings from './pdfcraft-web-36b069bb96944220.js';
+const wasm = await init({ module_or_path: './pdfcraft-web-36b069bb96944220_bg.wasm' });
 
 window.wasmBindings = bindings;
 
@@ -49,14 +49,18 @@ dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
     window.dispatchEvent(ev);
     document.dispatchEvent(ev);
   };
+
+  document.addEventListener('contextmenu', function(e) {
+    e.preventDefault();
+  }, false);
 })();
 </script>
     <style>
-      html, body { margin: 0; height: 100%; overflow: hidden; background: #f1f1f3; touch-action: manipulation; }
-      canvas { width: 100%; height: 100%; display: block; outline: none; }
+      html, body { margin: 0; height: 100%; overflow: hidden; background: #f1f1f3; touch-action: none; }
+      canvas { width: 100%; height: 100%; display: block; outline: none; touch-action: none; }
       @media (prefers-color-scheme: dark) { html, body { background: #19191c; } }
     </style>
-  <link rel="modulepreload" href="./pdfcraft-web-1bd04f048a5f9e2e.js" crossorigin="anonymous" integrity="sha384-H+wGtt/h4WBgDWjorME0YcZb0Zc0ZGLfTstvnpiaStvsuzMvI/gw6F4bmbLP04Z6"><link rel="preload" href="./pdfcraft-web-1bd04f048a5f9e2e_bg.wasm" crossorigin="anonymous" integrity="sha384-zJcAhmaupJgWmS8OznSJp8ymGSD2NqRAsSP7EFrDKetB+ABU+iPay2D/OijLG0Qh" as="fetch" type="application/wasm"></head>
+  <link rel="modulepreload" href="./pdfcraft-web-36b069bb96944220.js" crossorigin="anonymous" integrity="sha384-H+wGtt/h4WBgDWjorME0YcZb0Zc0ZGLfTstvnpiaStvsuzMvI/gw6F4bmbLP04Z6"><link rel="preload" href="./pdfcraft-web-36b069bb96944220_bg.wasm" crossorigin="anonymous" integrity="sha384-ICbLF6JRaNBXXg7tEjbvBpqtW2MJRGpZrib4jgVLIwBczXQBTS/PhHIsrTeXUk72" as="fetch" type="application/wasm"></head>
   <body>
     <canvas id="pdfcraft"></canvas>
   </body>

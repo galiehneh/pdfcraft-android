@@ -4,6 +4,19 @@ Semua perubahan penting pada proyek **PdfCraft Android** didokumentasikan dalam 
 
 ---
 
+## [2026.10.14.1] - 2026-10-14
+
+### Perbaikan & Peningkatan Navigasi Mobile
+- **Dismissal & Deselect Menu Aksi Seleksi Teks (Click-Outside):** Mengetuk atau mengklik di sembarang area luar menu aksi seleksi teks ("Salin / Sorot / Komentar") otomatis menutup menu popup dan membatalkan seleksi teks (*deselect*). Deteksi pointer touch dipertahankan saat release agar hit-testing akurat pada layar sentuh.
+- **Koreksi Skala Raster Layar High-DPI:** Mengembalikan perhitungan skala raster 1:1 dengan rasio piksel perangkat (`render_scale`), menghilangkan bug kanvas/halaman putih berlebih di sisi kanan dan bawah pada layar ponsel berdensitas tinggi.
+- **Eliminasi Konflik Pinch-to-Zoom:** Mendeteksi gestur multi-touch dan pinch zoom secara real-time. Seleksi teks dan drag selection ditekan saat 2 jari aktif atau dalam jeda 350ms setelah pinch selesai, sehingga menu aksi ("Salin / Sorot / Komentar") tidak muncul secara keliru saat mencubit layar untuk memperbesar/memperkecil.
+- **Pembersihan Menu Konteks Desktop:** Mematikan popup menu konteks desktop ("Add a sticky note here", properti, panel komentar) pada tampilan ponsel kompak (`is_compact_mobile`), serta mencegah event `contextmenu` sintetis dari browser / WebView pada canvas.
+- **Drag-to-Pan Halus:** Mengarahkan usapan satu jari pada mode seleksi standar untuk menggeser/menggulir (*pan / scroll*) dokumen secara mulus, bukan menyeleksi karakter acak di bawah jempol. Seleksi teks di ponsel tetap dapat diakses melalui ketukan ganda (*double-tap*) atau alat anotasi khusus.
+- **Ketukan Ganda Smart Zoom:** Mengetuk layar dua kali (*double-tap*) pada ponsel otomatis beralih antara skala *Fit-to-Width* dan zoom baca nyaman 1.75x terpusat pada posisi ketukan.
+- **Penyederhanaan Header Ponsel:** Menghapus tombol anotasi pensil duplikat dari bilah atas ponsel untuk memberikan ruang luas pada judul dokumen agar tidak terpotong. Akses alat anotasi tetap terpusat di bilah navigasi bawah yang mudah dijangkau ibu jari.
+
+---
+
 ## [2026.10.13.3] - 2026-10-14
 
 ### Perbaikan
