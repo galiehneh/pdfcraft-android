@@ -1,5 +1,6 @@
 package com.galiehneh.pdfcraft;
 
+import android.app.AlertDialog;
 import android.content.ActivityNotFoundException;
 import android.content.Intent;
 import android.graphics.Color;
@@ -15,6 +16,7 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
+import android.webkit.RenderProcessGoneDetail;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebResourceResponse;
 import android.webkit.WebSettings;
@@ -25,6 +27,7 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import androidx.activity.ComponentActivity;
+import androidx.activity.OnBackPressedCallback;
 import androidx.webkit.WebViewAssetLoader;
 import androidx.webkit.WebViewCompat;
 import androidx.webkit.WebViewFeature;
@@ -49,6 +52,7 @@ public class MainActivity extends ComponentActivity {
     private static final int FILE_CHOOSER_REQUEST = 1001;
     private static final int DIRECT_PICKER_REQUEST = 1002;
 
+    private FrameLayout rootLayout;
     private WebView webView;
     private WebViewAssetLoader assetLoader;
     private FileImporter importer;
@@ -63,19 +67,15 @@ public class MainActivity extends ComponentActivity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        FrameLayout rootLayout = new FrameLayout(this);
+        rootLayout = new FrameLayout(this);
         rootLayout.setLayoutParams(new ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT
         ));
         applyWindowInsets(rootLayout);
 
-        webView = new WebView(this);
-        webView.setLayoutParams(new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT
-        ));
-        rootLayout.addView(webView);
+        webView = createWebView();
+        rootLayout.addView(webView, 0);
 
         // Floating Action Button "Buka PDF" (ditampilkan saat belum ada dokumen)
         fab = createFabButton();
@@ -85,15 +85,63 @@ public class MainActivity extends ComponentActivity {
 
         importer = new FileImporter(this);
         configureWebView();
+        getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
+            @Override
+            public void handleOnBackPressed() {
+                onBack();
+            }
+        });
 
-        Intent intent = getIntent();
-        if (intent != null && FileImporter.isIncomingAction(intent)) {
-            handleIncomingIntent(intent);
-        } else if (savedInstanceState == null) {
-            webView.loadUrl(BASE_URL);
+        if (savedInstanceState == null) {
+            Intent intent = getIntent();
+            if (intent != null && FileImporter.isIncomingAction(intent)) {
+                handleIncomingIntent(intent);
+            } else {
+                webView.loadUrl(BASE_URL);
+            }
         } else {
             webView.restoreState(savedInstanceState);
         }
+    }
+
+    private WebView createWebView() {
+        WebView view = new WebView(this);
+        view.setLayoutParams(new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+        ));
+        return view;
+    }
+
+    @Override
+    protected void onPause() {
+        if (webView != null) webView.onPause();
+        super.onPause();
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        if (webView != null) webView.onResume();
+    }
+
+    @Override
+    protected void onDestroy() {
+        if (filePathCallback != null) {
+            filePathCallback.onReceiveValue(null);
+            filePathCallback = null;
+        }
+        destroyWebView(webView);
+        webView = null;
+        super.onDestroy();
+    }
+
+    private void destroyWebView(WebView view) {
+        if (view == null) return;
+        ViewGroup parent = (ViewGroup) view.getParent();
+        if (parent != null) parent.removeView(view);
+        view.stopLoading();
+        view.destroy();
     }
 
     @Override
@@ -241,6 +289,14 @@ public class MainActivity extends ComponentActivity {
                     if (patched != null) return patched;
                 }
                 return assetLoader.shouldInterceptRequest(uri);
+            }
+
+            @Override
+            public boolean onRenderProcessGone(WebView view, RenderProcessGoneDetail detail) {
+                Log.e(TAG, "Renderer process gone");
+                if (view != webView) return true;
+                recoverFromRendererLoss();
+                return true;
             }
         });
 
@@ -427,21 +483,34 @@ public class MainActivity extends ComponentActivity {
         }
     }
 
-    @Override
-    public void onBackPressed() {
-        if (webView != null) {
-            webView.evaluateJavascript("window.handleAndroidBack && window.handleAndroidBack();", null);
+    private void recoverFromRendererLoss() {
+        destroyWebView(webView);
+        if (filePathCallback != null) {
+            filePathCallback.onReceiveValue(null);
+            filePathCallback = null;
         }
-        if (fab != null && fab.getVisibility() == View.GONE) {
-            // Currently viewing a document; return to home
-            fab.setVisibility(View.VISIBLE);
-            this.currentDocumentName = null;
-            if (webView != null) {
-                webView.loadUrl(BASE_URL);
-                webView.clearHistory();
-            }
-            backPressedTime = 0;
-            Toast.makeText(this, "Kembali ke Beranda", Toast.LENGTH_SHORT).show();
+        webView = createWebView();
+        rootLayout.addView(webView, 0);
+        configureWebView();
+        currentDocumentName = null;
+        fab.setVisibility(View.VISIBLE);
+        webView.loadUrl(BASE_URL);
+        Toast.makeText(this, "Tampilan dimuat ulang karena kehabisan memori. Dokumen yang belum disimpan hilang.",
+                Toast.LENGTH_LONG).show();
+    }
+
+    private boolean isDocumentOpen() {
+        return fab != null && fab.getVisibility() == View.GONE;
+    }
+
+    private void onBack() {
+        if (isDocumentOpen() && webView != null) {
+            // Escape closes dialogs/modes first; only confirm when nothing consumed it.
+            webView.evaluateJavascript(
+                    "(window.handleAndroidBack ? window.handleAndroidBack() : false)",
+                    value -> {
+                        if (!"true".equals(value)) confirmCloseDocument();
+                    });
             return;
         }
 
@@ -451,7 +520,7 @@ public class MainActivity extends ComponentActivity {
             if (exitToast != null) {
                 exitToast.cancel();
             }
-            super.onBackPressed();
+            finish();
         } else {
             backPressedTime = currentTime;
             if (exitToast != null) {
@@ -461,6 +530,22 @@ public class MainActivity extends ComponentActivity {
             exitToast.show();
             getWindow().getDecorView().performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY);
         }
+    }
+
+    private void confirmCloseDocument() {
+        if (isFinishing() || isDestroyed() || !isDocumentOpen()) return;
+        new AlertDialog.Builder(this)
+                .setTitle("Tutup dokumen?")
+                .setMessage("Perubahan yang belum disimpan akan hilang.")
+                .setNegativeButton("Batal", null)
+                .setPositiveButton("Tutup", (d, w) -> {
+                    fab.setVisibility(View.VISIBLE);
+                    currentDocumentName = null;
+                    backPressedTime = 0;
+                    webView.loadUrl(BASE_URL);
+                    webView.clearHistory();
+                })
+                .show();
     }
 
     @Override

@@ -112,6 +112,7 @@
     });
     window.dispatchEvent(ev);
     document.dispatchEvent(ev);
+    return ev.defaultPrevented;
   };
 
   document.addEventListener('contextmenu', function(e) {
