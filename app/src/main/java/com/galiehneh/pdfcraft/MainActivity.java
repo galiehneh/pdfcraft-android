@@ -9,6 +9,7 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.util.Log;
+import org.json.JSONObject;
 import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.MotionEvent;
@@ -42,6 +43,8 @@ import java.nio.charset.StandardCharsets;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 public class MainActivity extends ComponentActivity {
     private static final String TAG = "PdfCraft";
@@ -51,6 +54,7 @@ public class MainActivity extends ComponentActivity {
     private static final String SHIM_ASSET = "android/shim.js";
     private static final int FILE_CHOOSER_REQUEST = 1001;
     private static final int DIRECT_PICKER_REQUEST = 1002;
+    private static final int SAVE_AS_REQUEST = 1003;
 
     private FrameLayout rootLayout;
     private WebView webView;
@@ -62,6 +66,10 @@ public class MainActivity extends ComponentActivity {
     private TextView fab;
     private long backPressedTime = 0;
     private Toast exitToast = null;
+    private FileSaver fileSaver;
+    private final ExecutorService saveExecutor = Executors.newSingleThreadExecutor();
+    private AndroidBridge.SavedFile pendingSaveAs;
+    private boolean pendingSaveAsInitial;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -84,6 +92,7 @@ public class MainActivity extends ComponentActivity {
         setContentView(rootLayout);
 
         importer = new FileImporter(this);
+        fileSaver = new FileSaver(this);
         configureWebView();
         getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
             @Override
@@ -133,6 +142,7 @@ public class MainActivity extends ComponentActivity {
         }
         destroyWebView(webView);
         webView = null;
+        saveExecutor.shutdown();
         super.onDestroy();
     }
 
@@ -266,7 +276,7 @@ public class MainActivity extends ComponentActivity {
         });
 
         webView.addJavascriptInterface(
-                new AndroidBridge(this, webView, new FileSaver(this), this::onDocumentOpened),
+                new AndroidBridge(this, webView, fileSaver, this::onDocumentOpened, saveListener),
                 "PdfCraftAndroid");
 
         assetLoader = new WebViewAssetLoader.Builder()
@@ -473,6 +483,8 @@ public class MainActivity extends ComponentActivity {
                 filePathCallback.onReceiveValue(results);
                 filePathCallback = null;
             }
+        } else if (requestCode == SAVE_AS_REQUEST) {
+            onSaveAsResult(resultCode, data);
         } else if (requestCode == DIRECT_PICKER_REQUEST) {
             if (resultCode == RESULT_OK && data != null) {
                 Uri uri = data.getData();
@@ -481,6 +493,104 @@ public class MainActivity extends ComponentActivity {
                 }
             }
         }
+    }
+
+    // ---- Output files (save / open / share) ----
+
+    private final AndroidBridge.SaveListener saveListener = new AndroidBridge.SaveListener() {
+        @Override
+        public void onSaved(AndroidBridge.SavedFile file, String finalName) {
+            runOnUiThread(() -> onSaveSucceeded(file, finalName, Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q));
+        }
+
+        @Override
+        public void onNeedsDestination(AndroidBridge.SavedFile file) {
+            runOnUiThread(() -> launchSaveAs(file, true));
+        }
+
+        @Override
+        public void onFailed(String name, String message) {
+            runOnUiThread(() -> onSaveFailed(name, message));
+        }
+    };
+
+    private void onSaveSucceeded(AndroidBridge.SavedFile file, String name, boolean inDownloads) {
+        reportSaveResult(true, name, "");
+        if (isFinishing() || isDestroyed()) return;
+        getWindow().getDecorView().performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS);
+        new AlertDialog.Builder(this)
+                .setTitle("Tersimpan")
+                .setMessage("Tersimpan: " + name + (inDownloads ? "\nLokasi: folder Download" : ""))
+                .setPositiveButton("Buka", (d, w) -> startSaveAction(SaveActions.view(this, file.file, file.mime)))
+                .setNeutralButton("Bagikan", (d, w) -> startSaveAction(SaveActions.share(this, file.file, file.mime)))
+                .setNegativeButton("Simpan sebagai\u2026", (d, w) -> launchSaveAs(file, false))
+                .show();
+    }
+
+    private void onSaveFailed(String name, String message) {
+        reportSaveResult(false, name, message);
+        Toast.makeText(this, message, Toast.LENGTH_LONG).show();
+    }
+
+    private void startSaveAction(Intent intent) {
+        try {
+            startActivity(intent);
+        } catch (ActivityNotFoundException | SecurityException e) {
+            Log.w(TAG, "No handler for saved file action", e);
+            Toast.makeText(this, "Tidak ada aplikasi yang dapat menangani berkas ini", Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void launchSaveAs(AndroidBridge.SavedFile file, boolean initial) {
+        pendingSaveAs = file;
+        pendingSaveAsInitial = initial;
+        Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT)
+                .addCategory(Intent.CATEGORY_OPENABLE)
+                .setType(file.mime)
+                .putExtra(Intent.EXTRA_TITLE, file.name);
+        try {
+            startActivityForResult(intent, SAVE_AS_REQUEST);
+        } catch (ActivityNotFoundException e) {
+            pendingSaveAs = null;
+            onSaveFailed(file.name, "Tidak ada aplikasi untuk memilih lokasi simpan");
+        }
+    }
+
+    private void onSaveAsResult(int resultCode, Intent data) {
+        AndroidBridge.SavedFile file = pendingSaveAs;
+        boolean initial = pendingSaveAsInitial;
+        pendingSaveAs = null;
+        if (file == null) return;
+        Uri uri = resultCode == RESULT_OK && data != null ? data.getData() : null;
+        if (uri == null) {
+            if (initial) onSaveFailed(file.name, "Penyimpanan dibatalkan");
+            return;
+        }
+        saveExecutor.execute(() -> {
+            try {
+                fileSaver.saveToUri(file.file, uri);
+                String shown = fileSaver.displayName(uri);
+                String name = shown != null ? shown : file.name;
+                runOnUiThread(() -> {
+                    if (initial) {
+                        onSaveSucceeded(file, name, false);
+                    } else {
+                        Toast.makeText(this, "Tersimpan: " + name, Toast.LENGTH_LONG).show();
+                    }
+                });
+            } catch (IOException | RuntimeException e) {
+                Log.e(TAG, "Save-as failed", e);
+                runOnUiThread(() -> onSaveFailed(file.name, "Gagal menyimpan berkas"));
+            }
+        });
+    }
+
+    /** Tells the web side how the save ended: window.onSaveResult(ok, name, message). */
+    private void reportSaveResult(boolean ok, String name, String message) {
+        if (webView == null) return;
+        webView.evaluateJavascript("(window.onSaveResult && window.onSaveResult(" + ok + ","
+                + JSONObject.quote(name == null ? "" : name) + ","
+                + JSONObject.quote(message == null ? "" : message) + "))", null);
     }
 
     private void recoverFromRendererLoss() {

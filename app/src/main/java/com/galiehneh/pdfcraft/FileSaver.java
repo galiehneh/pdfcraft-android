@@ -3,18 +3,24 @@ package com.galiehneh.pdfcraft;
 import android.content.ContentResolver;
 import android.content.ContentValues;
 import android.content.Context;
+import android.database.Cursor;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Environment;
+import android.provider.DocumentsContract;
 import android.provider.MediaStore;
+import android.provider.OpenableColumns;
 import android.util.Log;
 
+import androidx.annotation.RequiresApi;
+
 import java.io.File;
-import java.io.FileOutputStream;
+import java.io.FileInputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.OutputStream;
 
-/** Writes output files into the public Downloads folder. */
+/** Copies a finished temp file to its final destination (Downloads via MediaStore, or a SAF uri). */
 class FileSaver {
     private static final String TAG = "PdfCraft";
     private final Context context;
@@ -23,35 +29,70 @@ class FileSaver {
         this.context = context.getApplicationContext();
     }
 
-    boolean saveToDownloads(String filename, byte[] bytes) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            ContentResolver resolver = context.getContentResolver();
-            ContentValues contentValues = new ContentValues();
-            contentValues.put(MediaStore.MediaColumns.DISPLAY_NAME, filename);
-            contentValues.put(MediaStore.MediaColumns.MIME_TYPE, "application/pdf");
-            contentValues.put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS);
+    /** API 29+. Returns the entry's final display name (MediaStore may rename duplicates). */
+    @RequiresApi(Build.VERSION_CODES.Q)
+    String saveToDownloads(File src, String name, String mime) throws IOException {
+        ContentResolver resolver = context.getContentResolver();
+        ContentValues values = new ContentValues();
+        values.put(MediaStore.MediaColumns.DISPLAY_NAME, name);
+        values.put(MediaStore.MediaColumns.MIME_TYPE, mime);
+        values.put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS);
+        values.put(MediaStore.MediaColumns.IS_PENDING, 1);
 
-            Uri uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, contentValues);
-            if (uri == null) return false;
-            try (OutputStream os = resolver.openOutputStream(uri)) {
-                if (os != null) {
-                    os.write(bytes);
-                    return true;
-                }
-            } catch (IOException e) {
-                Log.e(TAG, "Error writing to MediaStore", e);
+        Uri uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values);
+        if (uri == null) throw new IOException("MediaStore insert returned null");
+        try {
+            copy(src, uri);
+            ContentValues done = new ContentValues();
+            done.put(MediaStore.MediaColumns.IS_PENDING, 0);
+            if (resolver.update(uri, done, null, null) < 1) {
+                throw new IOException("Cannot publish pending entry");
             }
-            return false;
+        } catch (IOException | RuntimeException e) {
+            try {
+                resolver.delete(uri, null, null);
+            } catch (RuntimeException ex) {
+                Log.w(TAG, "Cannot remove failed entry", ex);
+            }
+            throw e;
         }
-        File dir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
-        if (!dir.exists()) dir.mkdirs();
-        File file = new File(dir, filename);
-        try (FileOutputStream fos = new FileOutputStream(file)) {
-            fos.write(bytes);
-            return true;
-        } catch (IOException e) {
-            Log.e(TAG, "Error writing to file", e);
-            return false;
+        String finalName = displayName(uri);
+        return finalName != null ? finalName : name;
+    }
+
+    /** Copies {@code src} into a SAF document; removes the document if the copy fails. */
+    void saveToUri(File src, Uri uri) throws IOException {
+        try {
+            copy(src, uri);
+        } catch (IOException | RuntimeException e) {
+            try {
+                DocumentsContract.deleteDocument(context.getContentResolver(), uri);
+            } catch (Exception ex) {
+                Log.w(TAG, "Cannot remove failed document", ex);
+            }
+            throw e;
+        }
+    }
+
+    String displayName(Uri uri) {
+        try (Cursor c = context.getContentResolver()
+                .query(uri, new String[]{OpenableColumns.DISPLAY_NAME}, null, null, null)) {
+            if (c != null && c.moveToFirst()) return c.getString(0);
+        } catch (RuntimeException e) {
+            Log.w(TAG, "Cannot read display name", e);
+        }
+        return null;
+    }
+
+    private void copy(File src, Uri dest) throws IOException {
+        try (InputStream in = new FileInputStream(src);
+             OutputStream out = context.getContentResolver().openOutputStream(dest, "w")) {
+            if (out == null) throw new IOException("openOutputStream returned null");
+            byte[] buf = new byte[64 * 1024];
+            int n;
+            while ((n = in.read(buf)) != -1) {
+                out.write(buf, 0, n);
+            }
         }
     }
 }

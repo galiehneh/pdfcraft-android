@@ -79,27 +79,62 @@
     }
   });
 
+  const SAVE_CHUNK_BYTES = 512 * 1024;
+
+  function bytesToBase64(bytes) {
+    let bin = '';
+    const step = 0x8000;
+    for (let i = 0; i < bytes.length; i += step) {
+      bin += String.fromCharCode.apply(null, bytes.subarray(i, i + step));
+    }
+    return btoa(bin);
+  }
+
+  // Streams a blob to native in ~512 KB chunks: beginSave -> appendChunk* -> finishSave.
+  async function saveBlobNative(blob, filename) {
+    const bridge = window.PdfCraftAndroid;
+    const id = bridge.beginSave(filename || '', blob.type || '');
+    if (!id) return; // native already reported the failure
+    try {
+      for (let off = 0; off < blob.size; off += SAVE_CHUNK_BYTES) {
+        const buf = await blob.slice(off, off + SAVE_CHUNK_BYTES).arrayBuffer();
+        if (!bridge.appendChunk(id, bytesToBase64(new Uint8Array(buf)))) return;
+      }
+      bridge.finishSave(id);
+    } catch (err) {
+      console.error('Blob save error:', err);
+      bridge.abortSave(id);
+      if (typeof window.onSaveResult === 'function') window.onSaveResult(false, filename || '', String(err));
+    }
+  }
+
+  function canSaveNatively(url) {
+    return typeof url === 'string' && url.startsWith('blob:') &&
+      window.PdfCraftAndroid && window.PdfCraftAndroid.beginSave;
+  }
+
+  function interceptBlobUrl(url, filename) {
+    return fetch(url)
+      .then(function(res) { return res.blob(); })
+      .then(function(blob) { return saveBlobNative(blob, filename); })
+      .catch(function(err) { console.error('Blob download interception error:', err); });
+  }
+
   const origClick = HTMLAnchorElement.prototype.click;
   HTMLAnchorElement.prototype.click = function() {
-    if (this.href && this.href.startsWith("blob:") && window.PdfCraftAndroid) {
-      const href = this.href;
-      const filename = this.download || "document.pdf";
-      fetch(href)
-        .then(function(res) { return res.blob(); })
-        .then(function(blob) {
-          const reader = new FileReader();
-          reader.onloadend = function() {
-            if (window.PdfCraftAndroid && window.PdfCraftAndroid.saveBlob) {
-              window.PdfCraftAndroid.saveBlob(reader.result, filename);
-            }
-          };
-          reader.readAsDataURL(blob);
-        })
-        .catch(function(err) {
-          console.error("Blob download interception error:", err);
-        });
+    if (canSaveNatively(this.href)) {
+      interceptBlobUrl(this.href, this.download || '');
     }
     return origClick.apply(this, arguments);
+  };
+
+  const origOpen = window.open;
+  window.open = function(url) {
+    if (canSaveNatively(url)) {
+      interceptBlobUrl(url, '');
+      return null;
+    }
+    return origOpen.apply(this, arguments);
   };
 
   window.handleAndroidBack = function() {
