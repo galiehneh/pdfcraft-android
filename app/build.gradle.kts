@@ -34,13 +34,15 @@ android {
                 keyPassword = signingProperties.getProperty("keyPassword")
                 enableV1Signing = true
                 enableV2Signing = true
+                enableV3Signing = true
             }
         }
     }
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
             if (signingPropertiesFile.isFile) {
                 signingConfig = signingConfigs.getByName("release")
             }
@@ -58,4 +60,6 @@ dependencies {
     implementation("androidx.core:core:1.13.1")
     implementation("androidx.activity:activity:1.9.3")
     implementation("androidx.webkit:webkit:1.12.1")
+
+    testImplementation("junit:junit:4.13.2")
 }
