@@ -4,7 +4,7 @@ Semua perubahan penting pada proyek **PdfCraft Android** didokumentasikan dalam 
 
 ---
 
-## [Unreleased]
+## [2026.10.16] - 2026-10-16
 
 Catatan: `versionCode` adalah counter yang naik per rilis, **bukan** tanggal. Jangan menurunkannya atau menyesuaikannya ke tanggal; `versionName` yang memakai skema `YYYY.MM.DD[.patch]`.
 
@@ -28,28 +28,14 @@ Catatan: `versionCode` adalah counter yang naik per rilis, **bukan** tanggal. Ja
 - Unit test JVM untuk `Mime` dan batas sesi simpan.
 - Menambahkan `app/src/main/assets/web/BUNDLE.md` (asal bundle web).
 
----
-
-## [2026.10.16.2] - 2026-10-16
-
 ### Navigasi & UX Exit Aplikasi
 - **Double Back to Exit di Beranda:** Menambahkan proteksi keluar aplikasi saat berada di beranda (home), di mana pengguna harus menekan tombol kembali 2x dalam jeda waktu 2 detik untuk keluar dari aplikasi.
 - **Flash Info (Toast):** Memberikan pemberitahuan flash info "Tekan sekali lagi untuk keluar" saat penekanan tombol kembali pertama kali di beranda agar pengguna paham dan mencegah aplikasi tertutup tanpa sengaja.
 - **Pembersihan Riwayat Navigasi WebView:** Menghapus riwayat navigasi (`clearHistory`) saat kembali dari dokumen ke beranda untuk mencegah desinkronisasi tumpukan navigasi Android.
 
----
-
-## [2026.10.16.1] - 2026-10-16
-
-### Perbaikan
-- **Sticky note composer:** pemicu keyboard untuk komposer sticky note ditambahkan di bundle web.
-- **Fallback keyboard:** `showSoftInput` kini dicoba `SHOW_IMPLICIT`, lalu flag `0`, lalu `toggleSoftInput(SHOW_FORCED)` bila gagal, sehingga keyboard muncul di perangkat yang menolak permintaan implisit.
-
----
-
-## [2026.10.16] - 2026-10-16
-
 ### Keyboard & Fokus
+- **Sticky note composer:** pemicu keyboard untuk komposer sticky note ditambahkan di bundle web.
+- **Fallback keyboard:** `showSoftInput` dicoba `SHOW_IMPLICIT`, lalu flag `0`, lalu `toggleSoftInput(SHOW_FORCED)` bila gagal.
 - **Jembatan soft keyboard:** `showKeyboard`/`hideKeyboard` diekspos ke web agar keyboard sistem muncul saat input teks di canvas difokuskan.
 - **Fokus sentuh:** perbaikan fokus input pada interaksi sentuh di WebView.
 - **Visibilitas FAB dinamis:** tombol buka berkas mengambang disembunyikan saat dokumen terbuka dan ditampilkan kembali di beranda.

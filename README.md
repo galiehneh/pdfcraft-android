@@ -37,8 +37,8 @@ Porting & Packaging dari [storytold/pdfcraft](https://github.com/storytold/pdfcr
 ## Spesifikasi Build
 
 - **Application ID:** `com.galiehneh.pdfcraft`
-- **Version Name:** `2026.10.16.2`
-- **Version Code:** `20261024` (counter rilis, bukan tanggal)
+- **Version Name:** `2026.10.16`
+- **Version Code:** `20261025` (counter rilis, bukan tanggal)
 - **Minimum SDK:** Android 7.0 (API 24)
 - **Target SDK:** Android 15 (API 35)
 
