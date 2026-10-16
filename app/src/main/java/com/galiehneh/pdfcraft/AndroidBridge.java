@@ -66,16 +66,25 @@ class AndroidBridge {
     private final FileSaver fileSaver;
     private final Consumer<Boolean> onDocumentOpened;
     private final SaveListener saveListener;
+    private final Runnable onAppReady;
     private final Map<String, Session> sessions = new ConcurrentHashMap<>();
     private volatile String retainedDir;
 
     AndroidBridge(Activity activity, WebView webView, FileSaver fileSaver,
-                  Consumer<Boolean> onDocumentOpened, SaveListener saveListener) {
+                  Consumer<Boolean> onDocumentOpened, SaveListener saveListener,
+                  Runnable onAppReady) {
         this.activity = activity;
         this.webView = webView;
         this.fileSaver = fileSaver;
         this.onDocumentOpened = onDocumentOpened;
         this.saveListener = saveListener;
+        this.onAppReady = onAppReady;
+    }
+
+    /** Called by the shim once the wasm app has initialised and painted its first frame. */
+    @JavascriptInterface
+    public void appReady() {
+        activity.runOnUiThread(onAppReady);
     }
 
     @JavascriptInterface

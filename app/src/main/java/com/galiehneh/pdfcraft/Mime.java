@@ -43,6 +43,30 @@ final class Mime {
         return fileName != null && fileName.lastIndexOf('.') > 0 ? OCTET_STREAM : "application/pdf";
     }
 
+    /**
+     * Maps WebView accept entries (".pdf", "application/pdf", "image/*") to MIME types for a picker.
+     * Falls back to a single wildcard when empty or when any entry cannot be mapped.
+     */
+    static String[] acceptToMimeTypes(String[] accept) {
+        final String[] any = {"*/*"};
+        if (accept == null) return any;
+        java.util.LinkedHashSet<String> out = new java.util.LinkedHashSet<>();
+        for (String raw : accept) {
+            if (raw == null) continue;
+            String t = raw.trim().toLowerCase(Locale.US);
+            if (t.isEmpty()) continue;
+            if (t.startsWith(".")) {
+                t = fromFileName("x" + t);
+                if (t.equals(OCTET_STREAM)) return any;
+            } else if (!t.contains("/")) {
+                return any;
+            }
+            if (t.equals("*/*")) return any;
+            out.add(t);
+        }
+        return out.isEmpty() ? any : out.toArray(new String[0]);
+    }
+
     /** Extension (without dot) for common MIME types, or null. */
     static String extensionFor(String mime) {
         if (mime == null) return null;

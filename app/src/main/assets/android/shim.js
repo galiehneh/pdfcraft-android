@@ -137,6 +137,19 @@
     return origOpen.apply(this, arguments);
   };
 
+  // Tell native the wasm app is up and has painted, so it can drop the loading overlay.
+  var appReadySent = false;
+  function sendAppReady() {
+    if (appReadySent) return;
+    appReadySent = true;
+    if (window.PdfCraftAndroid && window.PdfCraftAndroid.appReady) {
+      window.PdfCraftAndroid.appReady();
+    }
+  }
+  window.addEventListener('TrunkApplicationStarted', function() {
+    requestAnimationFrame(function() { requestAnimationFrame(sendAppReady); });
+  }, { once: true });
+
   window.handleAndroidBack = function() {
     const ev = new KeyboardEvent('keydown', {
       key: 'Escape',

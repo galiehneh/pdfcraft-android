@@ -8,6 +8,8 @@ import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.util.Log;
 import org.json.JSONObject;
 import android.util.TypedValue;
@@ -24,11 +26,15 @@ import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.FrameLayout;
+import android.widget.LinearLayout;
+import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.widget.Toast;
 
 import androidx.activity.ComponentActivity;
 import androidx.activity.OnBackPressedCallback;
+import androidx.activity.result.ActivityResultLauncher;
+import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.webkit.WebViewAssetLoader;
 import androidx.webkit.WebViewCompat;
 import androidx.webkit.WebViewFeature;
@@ -52,9 +58,8 @@ public class MainActivity extends ComponentActivity {
     private static final String ORIGIN = "https://" + HOST;
     private static final String BASE_URL = ORIGIN + "/index.html";
     private static final String SHIM_ASSET = "android/shim.js";
-    private static final int FILE_CHOOSER_REQUEST = 1001;
-    private static final int DIRECT_PICKER_REQUEST = 1002;
-    private static final int SAVE_AS_REQUEST = 1003;
+    private static final long OVERLAY_TIMEOUT_MS = 15000;
+    private static final String PDF_MIME = "application/pdf";
 
     private FrameLayout rootLayout;
     private WebView webView;
@@ -68,6 +73,20 @@ public class MainActivity extends ComponentActivity {
     private Toast exitToast = null;
     private FileSaver fileSaver;
     private final ExecutorService saveExecutor = Executors.newSingleThreadExecutor();
+    private final ExecutorService importExecutor = Executors.newSingleThreadExecutor();
+    private final Handler mainHandler = new Handler(Looper.getMainLooper());
+    private final Runnable hideOverlay = () -> setOverlayVisible(false);
+    private View loadingOverlay;
+    private TextView loadingText;
+    private final ActivityResultLauncher<Intent> chooserLauncher = registerForActivityResult(
+            new ActivityResultContracts.StartActivityForResult(), r -> onChooserResult(r.getResultCode(), r.getData()));
+    private final ActivityResultLauncher<Intent> directPickerLauncher = registerForActivityResult(
+            new ActivityResultContracts.StartActivityForResult(), r -> {
+                Uri uri = r.getResultCode() == RESULT_OK && r.getData() != null ? r.getData().getData() : null;
+                if (uri != null) handlePdfUri(uri);
+            });
+    private final ActivityResultLauncher<Intent> saveAsLauncher = registerForActivityResult(
+            new ActivityResultContracts.StartActivityForResult(), r -> onSaveAsResult(r.getResultCode(), r.getData()));
     private AndroidBridge.SavedFile pendingSaveAs;
     private boolean pendingSaveAsInitial;
 
@@ -89,6 +108,9 @@ public class MainActivity extends ComponentActivity {
         fab = createFabButton();
         rootLayout.addView(fab);
 
+        loadingOverlay = createLoadingOverlay();
+        rootLayout.addView(loadingOverlay);
+
         setContentView(rootLayout);
 
         importer = new FileImporter(this);
@@ -102,15 +124,53 @@ public class MainActivity extends ComponentActivity {
         });
 
         if (savedInstanceState == null) {
+            importer.cleanup(null);
             Intent intent = getIntent();
             if (intent != null && FileImporter.isIncomingAction(intent)) {
+                setOverlayVisible(true);
                 handleIncomingIntent(intent);
             } else {
-                webView.loadUrl(BASE_URL);
+                loadUrlWithOverlay(BASE_URL);
             }
         } else {
+            setOverlayVisible(true);
             webView.restoreState(savedInstanceState);
         }
+    }
+
+    private View createLoadingOverlay() {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setGravity(Gravity.CENTER);
+        box.setBackgroundColor(0xFFF1F1F3);
+        box.setClickable(true); // swallow touches while covering the WebView
+        box.setVisibility(View.GONE);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            box.setElevation(dpToPx(16)); // above the FAB
+        }
+        box.addView(new ProgressBar(this));
+        loadingText = new TextView(this);
+        loadingText.setTextColor(0xFF444444);
+        loadingText.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
+        loadingText.setPadding(0, dpToPx(12), 0, 0);
+        box.addView(loadingText);
+        box.setLayoutParams(new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        return box;
+    }
+
+    /** Shows or hides the overlay; while shown it self-hides after a safety timeout. */
+    private void setOverlayVisible(boolean visible) {
+        mainHandler.removeCallbacks(hideOverlay);
+        if (loadingOverlay == null) return;
+        loadingOverlay.setVisibility(visible ? View.VISIBLE : View.GONE);
+        if (visible) mainHandler.postDelayed(hideOverlay, OVERLAY_TIMEOUT_MS);
+    }
+
+    private void loadUrlWithOverlay(String url) {
+        loadingText.setText("");
+        setOverlayVisible(true);
+        webView.loadUrl(url);
     }
 
     private WebView createWebView() {
@@ -142,7 +202,9 @@ public class MainActivity extends ComponentActivity {
         }
         destroyWebView(webView);
         webView = null;
+        mainHandler.removeCallbacks(hideOverlay);
         saveExecutor.shutdown();
+        importExecutor.shutdown();
         super.onDestroy();
     }
 
@@ -276,7 +338,8 @@ public class MainActivity extends ComponentActivity {
         });
 
         webView.addJavascriptInterface(
-                new AndroidBridge(this, webView, fileSaver, this::onDocumentOpened, saveListener),
+                new AndroidBridge(this, webView, fileSaver, this::onDocumentOpened, saveListener,
+                        () -> setOverlayVisible(false)),
                 "PdfCraftAndroid");
 
         assetLoader = new WebViewAssetLoader.Builder()
@@ -317,29 +380,40 @@ public class MainActivity extends ComponentActivity {
                     filePathCallback.onReceiveValue(null);
                 }
                 filePathCallback = callback;
-
-                Intent intent = FileImporter.openDocumentIntent();
-                if (params != null && params.getMode() == FileChooserParams.MODE_OPEN_MULTIPLE) {
-                    intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
-                }
-
-                try {
-                    startActivityForResult(intent, FILE_CHOOSER_REQUEST);
-                } catch (ActivityNotFoundException e) {
-                    try {
-                        startActivityForResult(FileImporter.getContentChooser(), FILE_CHOOSER_REQUEST);
-                    } catch (Exception ex) {
-                        Log.e(TAG, "Cannot launch file chooser", ex);
-                        if (filePathCallback != null) {
-                            filePathCallback.onReceiveValue(null);
-                            filePathCallback = null;
-                        }
-                        return false;
-                    }
+                String[] accept = params != null ? params.getAcceptTypes() : null;
+                boolean multiple = params != null && params.getMode() == FileChooserParams.MODE_OPEN_MULTIPLE;
+                if (!launchPicker(chooserLauncher, accept, multiple)) {
+                    filePathCallback = null;
+                    callback.onReceiveValue(null);
+                    return false;
                 }
                 return true;
             }
         });
+    }
+
+    /** Launches OPEN_DOCUMENT, falling back to GET_CONTENT. Returns false when no picker exists. */
+    private boolean launchPicker(ActivityResultLauncher<Intent> launcher, String[] accept, boolean multiple) {
+        try {
+            launcher.launch(FileImporter.pickIntent(Intent.ACTION_OPEN_DOCUMENT, accept, multiple));
+            return true;
+        } catch (ActivityNotFoundException e) {
+            try {
+                launcher.launch(Intent.createChooser(
+                        FileImporter.pickIntent(Intent.ACTION_GET_CONTENT, accept, multiple), "Pilih berkas"));
+                return true;
+            } catch (ActivityNotFoundException ex) {
+                Log.e(TAG, "Cannot launch file picker", ex);
+                return false;
+            }
+        }
+    }
+
+    private void onChooserResult(int resultCode, Intent data) {
+        ValueCallback<Uri[]> callback = filePathCallback;
+        filePathCallback = null;
+        if (callback == null) return;
+        callback.onReceiveValue(resultCode == RESULT_OK ? FileImporter.urisFromChooserResult(data) : null);
     }
 
     /** Injects the native-owned shim at document start, restricted to the app origin. */
@@ -397,12 +471,13 @@ public class MainActivity extends ComponentActivity {
         }
     }
 
-    /** Serves the imported document for any /doc/* request. */
+    /** Serves an imported document for /doc/<id>/<name>. */
     private WebResourceResponse handleDocument(String path) {
-        File cachedFile = new File(getCacheDir(), FileImporter.CACHE_FILE_NAME);
-        if (cachedFile.exists()) {
+        String id = FileImporter.docIdFromPath(path);
+        File cachedFile = id == null ? null : importer.docFile(id);
+        if (cachedFile != null && cachedFile.exists()) {
             try {
-                return new WebResourceResponse("application/pdf", "UTF-8", 200, "OK",
+                return new WebResourceResponse(PDF_MIME, "UTF-8", 200, "OK",
                         noCacheHeaders(), new FileInputStream(cachedFile));
             } catch (IOException e) {
                 Log.e(TAG, "Cannot stream cached PDF", e);
@@ -428,14 +503,8 @@ public class MainActivity extends ComponentActivity {
     }
 
     private void openDirectPdfPicker() {
-        try {
-            startActivityForResult(FileImporter.openDocumentIntent(), DIRECT_PICKER_REQUEST);
-        } catch (ActivityNotFoundException e) {
-            try {
-                startActivityForResult(FileImporter.getContentChooser(), DIRECT_PICKER_REQUEST);
-            } catch (Exception ex) {
-                Toast.makeText(this, "Tidak ada aplikasi pemilih berkas", Toast.LENGTH_SHORT).show();
-            }
+        if (!launchPicker(directPickerLauncher, new String[]{PDF_MIME}, false)) {
+            Toast.makeText(this, "Tidak ada aplikasi pemilih berkas", Toast.LENGTH_SHORT).show();
         }
     }
 
@@ -446,53 +515,36 @@ public class MainActivity extends ComponentActivity {
         }
     }
 
+    /** Copies the document off the UI thread behind the overlay, then loads it in the viewer. */
     private void handlePdfUri(Uri uri) {
-        try {
-            String name = importer.displayName(uri);
-            this.currentDocumentName = name;
-            importer.copyToCache(uri);
-
-            String encodedName = Uri.encode(name);
-            String url = BASE_URL + "?file=/doc/" + encodedName + "&t=" + System.currentTimeMillis();
-            if (webView != null) {
-                webView.loadUrl(url);
-                if (fab != null) {
-                    fab.setVisibility(View.GONE);
-                }
-                getWindow().getDecorView().performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY);
-                Toast.makeText(this, "Membuka PDF: " + name, Toast.LENGTH_SHORT).show();
+        loadingText.setText("Membuka PDF\u2026");
+        setOverlayVisible(true);
+        importExecutor.execute(() -> {
+            try {
+                String name = importer.displayName(uri);
+                String id = importer.copyToCache(uri);
+                runOnUiThread(() -> onImported(id, name));
+            } catch (IOException | RuntimeException e) {
+                Log.e(TAG, "Error handling PDF URI: " + uri, e);
+                runOnUiThread(() -> {
+                    setOverlayVisible(false);
+                    if (webView != null && webView.getUrl() == null) loadUrlWithOverlay(BASE_URL);
+                    Toast.makeText(this, "Gagal memproses berkas PDF", Toast.LENGTH_SHORT).show();
+                });
             }
-        } catch (Exception e) {
-            Log.e(TAG, "Error handling PDF URI: " + uri, e);
-            Toast.makeText(this, "Gagal memproses berkas PDF", Toast.LENGTH_SHORT).show();
-        }
+        });
     }
 
-    @Override
-    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
-        super.onActivityResult(requestCode, resultCode, data);
-        if (requestCode == FILE_CHOOSER_REQUEST) {
-            if (filePathCallback != null) {
-                Uri[] results = null;
-                if (resultCode == RESULT_OK && data != null) {
-                    if (fab != null) {
-                        fab.setVisibility(View.GONE);
-                    }
-                    results = FileImporter.urisFromChooserResult(data);
-                }
-                filePathCallback.onReceiveValue(results);
-                filePathCallback = null;
-            }
-        } else if (requestCode == SAVE_AS_REQUEST) {
-            onSaveAsResult(resultCode, data);
-        } else if (requestCode == DIRECT_PICKER_REQUEST) {
-            if (resultCode == RESULT_OK && data != null) {
-                Uri uri = data.getData();
-                if (uri != null) {
-                    handlePdfUri(uri);
-                }
-            }
+    private void onImported(String id, String name) {
+        if (isFinishing() || isDestroyed() || webView == null) return;
+        currentDocumentName = name;
+        webView.loadUrl(BASE_URL + "?file=/doc/" + id + "/" + Uri.encode(name) + "&t=" + System.currentTimeMillis());
+        if (fab != null) {
+            fab.setVisibility(View.GONE);
         }
+        importExecutor.execute(() -> importer.cleanup(id));
+        getWindow().getDecorView().performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY);
+        Toast.makeText(this, "Membuka PDF: " + name, Toast.LENGTH_SHORT).show();
     }
 
     // ---- Output files (save / open / share) ----
@@ -549,7 +601,7 @@ public class MainActivity extends ComponentActivity {
                 .setType(file.mime)
                 .putExtra(Intent.EXTRA_TITLE, file.name);
         try {
-            startActivityForResult(intent, SAVE_AS_REQUEST);
+            saveAsLauncher.launch(intent);
         } catch (ActivityNotFoundException e) {
             pendingSaveAs = null;
             onSaveFailed(file.name, "Tidak ada aplikasi untuk memilih lokasi simpan");
@@ -604,7 +656,7 @@ public class MainActivity extends ComponentActivity {
         configureWebView();
         currentDocumentName = null;
         fab.setVisibility(View.VISIBLE);
-        webView.loadUrl(BASE_URL);
+        loadUrlWithOverlay(BASE_URL);
         Toast.makeText(this, "Tampilan dimuat ulang karena kehabisan memori. Dokumen yang belum disimpan hilang.",
                 Toast.LENGTH_LONG).show();
     }
@@ -652,7 +704,7 @@ public class MainActivity extends ComponentActivity {
                     fab.setVisibility(View.VISIBLE);
                     currentDocumentName = null;
                     backPressedTime = 0;
-                    webView.loadUrl(BASE_URL);
+                    loadUrlWithOverlay(BASE_URL);
                     webView.clearHistory();
                 })
                 .show();

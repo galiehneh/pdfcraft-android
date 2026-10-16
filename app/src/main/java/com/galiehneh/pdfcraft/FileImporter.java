@@ -11,28 +11,40 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.util.UUID;
+import java.util.regex.Pattern;
 
 /** Incoming files: picker intents, intent parsing, and copying into the app cache. */
 class FileImporter {
-    static final String CACHE_FILE_NAME = "current_document.pdf";
+    static final String DOCS_DIR = "docs";
+    private static final Pattern DOC_ID = Pattern.compile("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}");
     private final Context context;
 
     FileImporter(Context context) {
         this.context = context;
     }
 
-    static Intent openDocumentIntent() {
-        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+    /** Picker intent for the given accept types (empty or unmappable means any file). */
+    static Intent pickIntent(String action, String[] accept, boolean multiple) {
+        String[] types = Mime.acceptToMimeTypes(accept);
+        Intent intent = new Intent(action);
         intent.addCategory(Intent.CATEGORY_OPENABLE);
-        intent.setType("application/pdf");
+        intent.setType(types.length == 1 ? types[0] : "*/*");
+        if (types.length > 1) intent.putExtra(Intent.EXTRA_MIME_TYPES, types);
+        if (multiple) intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
         return intent;
     }
 
-    static Intent getContentChooser() {
-        Intent fallback = new Intent(Intent.ACTION_GET_CONTENT);
-        fallback.addCategory(Intent.CATEGORY_OPENABLE);
-        fallback.setType("application/pdf");
-        return Intent.createChooser(fallback, "Pilih Dokumen PDF");
+    /** Document id embedded in a /doc/<id>/<name> request path, or null when malformed. */
+    static String docIdFromPath(String path) {
+        if (path == null) return null;
+        int cut = path.indexOf('/');
+        String id = cut < 0 ? path : path.substring(0, cut);
+        return DOC_ID.matcher(id).matches() ? id : null;
+    }
+
+    File docFile(String id) {
+        return new File(new File(context.getCacheDir(), DOCS_DIR), id + ".pdf");
     }
 
     static boolean isIncomingAction(Intent intent) {
@@ -43,16 +55,20 @@ class FileImporter {
     /** Extracts the file URI from a VIEW or SEND intent, or null. */
     static Uri uriFromIntent(Intent intent) {
         String action = intent.getAction();
+        Uri uri = null;
         if (Intent.ACTION_VIEW.equals(action)) {
-            return intent.getData();
-        }
-        if (Intent.ACTION_SEND.equals(action)) {
+            uri = intent.getData();
+        } else if (Intent.ACTION_SEND.equals(action)) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                return intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri.class);
+                uri = intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri.class);
+            } else {
+                uri = (Uri) intent.getParcelableExtra(Intent.EXTRA_STREAM);
             }
-            return (Uri) intent.getParcelableExtra(Intent.EXTRA_STREAM);
         }
-        return null;
+        if (uri == null && intent.getClipData() != null && intent.getClipData().getItemCount() > 0) {
+            uri = intent.getClipData().getItemAt(0).getUri();
+        }
+        return uri;
     }
 
     /** Result of a chooser pick: single data URI or all clip items; null when nothing picked. */
@@ -72,9 +88,12 @@ class FileImporter {
         return null;
     }
 
-    /** Copies the URI content into cacheDir/current_document.pdf. */
-    void copyToCache(Uri uri) throws IOException {
-        File dest = new File(context.getCacheDir(), CACHE_FILE_NAME);
+    /** Copies the URI content into cacheDir/docs/<id>.pdf and returns the new id. Blocking I/O. */
+    String copyToCache(Uri uri) throws IOException {
+        File dir = new File(context.getCacheDir(), DOCS_DIR);
+        if (!dir.isDirectory() && !dir.mkdirs()) throw new IOException("Cannot create " + dir);
+        String id = UUID.randomUUID().toString();
+        File dest = docFile(id);
         try (InputStream is = context.getContentResolver().openInputStream(uri);
              FileOutputStream fos = new FileOutputStream(dest)) {
             if (is == null) throw new IOException("Cannot open " + uri);
@@ -83,6 +102,20 @@ class FileImporter {
             while ((read = is.read(buffer)) != -1) {
                 fos.write(buffer, 0, read);
             }
+        } catch (IOException | RuntimeException e) {
+            if (!dest.delete() && dest.exists()) dest.deleteOnExit();
+            throw e;
+        }
+        return id;
+    }
+
+    /** Deletes every imported document except {@code keepId} (null deletes all). */
+    void cleanup(String keepId) {
+        File[] files = new File(context.getCacheDir(), DOCS_DIR).listFiles();
+        if (files == null) return;
+        String keep = keepId == null ? null : keepId + ".pdf";
+        for (File f : files) {
+            if (!f.getName().equals(keep) && !f.delete()) f.deleteOnExit();
         }
     }
 
