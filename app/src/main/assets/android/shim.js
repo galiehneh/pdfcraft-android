@@ -1,7 +1,7 @@
 (function() {
-  // Helper to find the hidden input element created by eframe TextAgent
+  // eframe's text agent: the only <input> it creates, marked autocapitalize="off".
   function getTextAgentInput() {
-    return document.querySelector('input[type="text"]') || document.querySelector('input');
+    return document.querySelector('input[autocapitalize="off"]');
   }
 
   function notifyShowKeyboard() {

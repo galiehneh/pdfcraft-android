@@ -3,7 +3,12 @@ package com.galiehneh.pdfcraft;
 import android.app.AlertDialog;
 import android.content.ActivityNotFoundException;
 import android.content.Intent;
-import android.graphics.Color;
+import android.content.res.Configuration;
+import android.graphics.drawable.ColorDrawable;
+import androidx.core.graphics.Insets;
+import androidx.core.view.ViewCompat;
+import androidx.core.view.WindowInsetsCompat;
+import androidx.activity.EdgeToEdge;
 import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Build;
@@ -93,6 +98,7 @@ public class MainActivity extends ComponentActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        EdgeToEdge.enable(this);
 
         rootLayout = new FrameLayout(this);
         rootLayout.setLayoutParams(new ViewGroup.LayoutParams(
@@ -111,6 +117,7 @@ public class MainActivity extends ComponentActivity {
         loadingOverlay = createLoadingOverlay();
         rootLayout.addView(loadingOverlay);
 
+        applyThemeColors();
         setContentView(rootLayout);
 
         importer = new FileImporter(this);
@@ -142,7 +149,6 @@ public class MainActivity extends ComponentActivity {
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
         box.setGravity(Gravity.CENTER);
-        box.setBackgroundColor(0xFFF1F1F3);
         box.setClickable(true); // swallow touches while covering the WebView
         box.setVisibility(View.GONE);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
@@ -150,7 +156,6 @@ public class MainActivity extends ComponentActivity {
         }
         box.addView(new ProgressBar(this));
         loadingText = new TextView(this);
-        loadingText.setTextColor(0xFF444444);
         loadingText.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
         loadingText.setPadding(0, dpToPx(12), 0, 0);
         box.addView(loadingText);
@@ -227,8 +232,7 @@ public class MainActivity extends ComponentActivity {
 
     private TextView createFabButton() {
         TextView fab = new TextView(this);
-        fab.setText("Buka PDF");
-        fab.setTextColor(Color.WHITE);
+        fab.setText(R.string.open_pdf);
         fab.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
         fab.setTypeface(null, android.graphics.Typeface.BOLD);
 
@@ -237,7 +241,6 @@ public class MainActivity extends ComponentActivity {
         fab.setPadding(padH, padV, padH, padV);
 
         GradientDrawable bg = new GradientDrawable();
-        bg.setColor(0xFF0A7563); // ArtCraft teal
         bg.setCornerRadius(dpToPx(28));
         fab.setBackground(bg);
 
@@ -264,35 +267,31 @@ public class MainActivity extends ComponentActivity {
     }
 
     private void applyWindowInsets(View view) {
-        final int navHeight = getNavigationBarHeight();
-        view.setPadding(0, 0, 0, navHeight);
+        ViewCompat.setOnApplyWindowInsetsListener(view, (v, insets) -> {
+            Insets bars = insets.getInsets(WindowInsetsCompat.Type.systemBars()
+                    | WindowInsetsCompat.Type.displayCutout()
+                    | WindowInsetsCompat.Type.ime());
+            v.setPadding(bars.left, bars.top, bars.right, bars.bottom);
+            return WindowInsetsCompat.CONSUMED;
+        });
+    }
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            view.setOnApplyWindowInsetsListener((v, insets) -> {
-                android.graphics.Insets bars = insets.getInsets(
-                        android.view.WindowInsets.Type.navigationBars() | android.view.WindowInsets.Type.displayCutout()
-                );
-                int bottom = bars.bottom > 0 ? bars.bottom : navHeight;
-                v.setPadding(bars.left, 0, bars.right, bottom);
-                return insets;
-            });
-        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT_WATCH) {
-            view.setOnApplyWindowInsetsListener((v, insets) -> {
-                int left = insets.getSystemWindowInsetLeft();
-                int right = insets.getSystemWindowInsetRight();
-                int bottom = insets.getSystemWindowInsetBottom();
-                v.setPadding(left, 0, right, bottom > 0 ? bottom : navHeight);
-                return insets;
-            });
+    /** Applies theme-dependent colors; also called on uiMode changes since the activity is not recreated. */
+    private void applyThemeColors() {
+        getWindow().setBackgroundDrawable(new ColorDrawable(getColor(R.color.window_background)));
+        if (loadingOverlay != null) loadingOverlay.setBackgroundColor(getColor(R.color.window_background));
+        if (loadingText != null) loadingText.setTextColor(getColor(R.color.overlay_text));
+        if (fab != null) {
+            fab.setTextColor(getColor(R.color.fab_text));
+            ((GradientDrawable) fab.getBackground()).setColor(getColor(R.color.fab_background));
         }
     }
 
-    private int getNavigationBarHeight() {
-        int resId = getResources().getIdentifier("navigation_bar_height", "dimen", "android");
-        if (resId > 0) {
-            return getResources().getDimensionPixelSize(resId);
-        }
-        return dpToPx(48);
+    @Override
+    public void onConfigurationChanged(Configuration newConfig) {
+        super.onConfigurationChanged(newConfig);
+        EdgeToEdge.enable(this);
+        applyThemeColors();
     }
 
     private int dpToPx(int dp) {
@@ -400,7 +399,7 @@ public class MainActivity extends ComponentActivity {
         } catch (ActivityNotFoundException e) {
             try {
                 launcher.launch(Intent.createChooser(
-                        FileImporter.pickIntent(Intent.ACTION_GET_CONTENT, accept, multiple), "Pilih berkas"));
+                        FileImporter.pickIntent(Intent.ACTION_GET_CONTENT, accept, multiple), getString(R.string.choose_file)));
                 return true;
             } catch (ActivityNotFoundException ex) {
                 Log.e(TAG, "Cannot launch file picker", ex);
@@ -504,7 +503,7 @@ public class MainActivity extends ComponentActivity {
 
     private void openDirectPdfPicker() {
         if (!launchPicker(directPickerLauncher, new String[]{PDF_MIME}, false)) {
-            Toast.makeText(this, "Tidak ada aplikasi pemilih berkas", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, getString(R.string.no_picker_app), Toast.LENGTH_SHORT).show();
         }
     }
 
@@ -517,7 +516,7 @@ public class MainActivity extends ComponentActivity {
 
     /** Copies the document off the UI thread behind the overlay, then loads it in the viewer. */
     private void handlePdfUri(Uri uri) {
-        loadingText.setText("Membuka PDF\u2026");
+        loadingText.setText(getString(R.string.opening_pdf));
         setOverlayVisible(true);
         importExecutor.execute(() -> {
             try {
@@ -529,7 +528,7 @@ public class MainActivity extends ComponentActivity {
                 runOnUiThread(() -> {
                     setOverlayVisible(false);
                     if (webView != null && webView.getUrl() == null) loadUrlWithOverlay(BASE_URL);
-                    Toast.makeText(this, "Gagal memproses berkas PDF", Toast.LENGTH_SHORT).show();
+                    Toast.makeText(this, getString(R.string.open_pdf_failed), Toast.LENGTH_SHORT).show();
                 });
             }
         });
@@ -544,7 +543,7 @@ public class MainActivity extends ComponentActivity {
         }
         importExecutor.execute(() -> importer.cleanup(id));
         getWindow().getDecorView().performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY);
-        Toast.makeText(this, "Membuka PDF: " + name, Toast.LENGTH_SHORT).show();
+        Toast.makeText(this, getString(R.string.opening_pdf_name, name), Toast.LENGTH_SHORT).show();
     }
 
     // ---- Output files (save / open / share) ----
@@ -571,11 +570,12 @@ public class MainActivity extends ComponentActivity {
         if (isFinishing() || isDestroyed()) return;
         getWindow().getDecorView().performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS);
         new AlertDialog.Builder(this)
-                .setTitle("Tersimpan")
-                .setMessage("Tersimpan: " + name + (inDownloads ? "\nLokasi: folder Download" : ""))
-                .setPositiveButton("Buka", (d, w) -> startSaveAction(SaveActions.view(this, file.file, file.mime)))
-                .setNeutralButton("Bagikan", (d, w) -> startSaveAction(SaveActions.share(this, file.file, file.mime)))
-                .setNegativeButton("Simpan sebagai\u2026", (d, w) -> launchSaveAs(file, false))
+                .setTitle(getString(R.string.saved_title))
+                .setMessage(getString(R.string.saved_message, name)
+                        + (inDownloads ? "\n" + getString(R.string.saved_location_downloads) : ""))
+                .setPositiveButton(getString(R.string.action_open), (d, w) -> startSaveAction(SaveActions.view(this, file.file, file.mime)))
+                .setNeutralButton(getString(R.string.action_share), (d, w) -> startSaveAction(SaveActions.share(this, file.file, file.mime)))
+                .setNegativeButton(getString(R.string.action_save_as), (d, w) -> launchSaveAs(file, false))
                 .show();
     }
 
@@ -589,7 +589,7 @@ public class MainActivity extends ComponentActivity {
             startActivity(intent);
         } catch (ActivityNotFoundException | SecurityException e) {
             Log.w(TAG, "No handler for saved file action", e);
-            Toast.makeText(this, "Tidak ada aplikasi yang dapat menangani berkas ini", Toast.LENGTH_LONG).show();
+            Toast.makeText(this, getString(R.string.no_handler_app), Toast.LENGTH_LONG).show();
         }
     }
 
@@ -604,7 +604,7 @@ public class MainActivity extends ComponentActivity {
             saveAsLauncher.launch(intent);
         } catch (ActivityNotFoundException e) {
             pendingSaveAs = null;
-            onSaveFailed(file.name, "Tidak ada aplikasi untuk memilih lokasi simpan");
+            onSaveFailed(file.name, getString(R.string.no_save_location_app));
         }
     }
 
@@ -615,7 +615,7 @@ public class MainActivity extends ComponentActivity {
         if (file == null) return;
         Uri uri = resultCode == RESULT_OK && data != null ? data.getData() : null;
         if (uri == null) {
-            if (initial) onSaveFailed(file.name, "Penyimpanan dibatalkan");
+            if (initial) onSaveFailed(file.name, getString(R.string.save_cancelled));
             return;
         }
         saveExecutor.execute(() -> {
@@ -627,12 +627,12 @@ public class MainActivity extends ComponentActivity {
                     if (initial) {
                         onSaveSucceeded(file, name, false);
                     } else {
-                        Toast.makeText(this, "Tersimpan: " + name, Toast.LENGTH_LONG).show();
+                        Toast.makeText(this, getString(R.string.saved_message, name), Toast.LENGTH_LONG).show();
                     }
                 });
             } catch (IOException | RuntimeException e) {
                 Log.e(TAG, "Save-as failed", e);
-                runOnUiThread(() -> onSaveFailed(file.name, "Gagal menyimpan berkas"));
+                runOnUiThread(() -> onSaveFailed(file.name, getString(R.string.save_failed)));
             }
         });
     }
@@ -657,7 +657,7 @@ public class MainActivity extends ComponentActivity {
         currentDocumentName = null;
         fab.setVisibility(View.VISIBLE);
         loadUrlWithOverlay(BASE_URL);
-        Toast.makeText(this, "Tampilan dimuat ulang karena kehabisan memori. Dokumen yang belum disimpan hilang.",
+        Toast.makeText(this, getString(R.string.renderer_reloaded),
                 Toast.LENGTH_LONG).show();
     }
 
@@ -688,7 +688,7 @@ public class MainActivity extends ComponentActivity {
             if (exitToast != null) {
                 exitToast.cancel();
             }
-            exitToast = Toast.makeText(this, "Tekan sekali lagi untuk keluar", Toast.LENGTH_SHORT);
+            exitToast = Toast.makeText(this, getString(R.string.exit_hint), Toast.LENGTH_SHORT);
             exitToast.show();
             getWindow().getDecorView().performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY);
         }
@@ -697,10 +697,10 @@ public class MainActivity extends ComponentActivity {
     private void confirmCloseDocument() {
         if (isFinishing() || isDestroyed() || !isDocumentOpen()) return;
         new AlertDialog.Builder(this)
-                .setTitle("Tutup dokumen?")
-                .setMessage("Perubahan yang belum disimpan akan hilang.")
-                .setNegativeButton("Batal", null)
-                .setPositiveButton("Tutup", (d, w) -> {
+                .setTitle(getString(R.string.close_doc_title))
+                .setMessage(getString(R.string.close_doc_message))
+                .setNegativeButton(getString(R.string.cancel), null)
+                .setPositiveButton(getString(R.string.close), (d, w) -> {
                     fab.setVisibility(View.VISIBLE);
                     currentDocumentName = null;
                     backPressedTime = 0;

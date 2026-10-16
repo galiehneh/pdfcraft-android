@@ -93,13 +93,7 @@ class AndroidBridge {
             webView.requestFocus();
             InputMethodManager imm = (InputMethodManager) activity.getSystemService(Activity.INPUT_METHOD_SERVICE);
             if (imm != null) {
-                boolean ok = imm.showSoftInput(webView, InputMethodManager.SHOW_IMPLICIT);
-                if (!ok) {
-                    ok = imm.showSoftInput(webView, 0);
-                }
-                if (!ok) {
-                    imm.toggleSoftInput(InputMethodManager.SHOW_FORCED, 0);
-                }
+                imm.showSoftInput(webView, InputMethodManager.SHOW_IMPLICIT);
             }
         });
     }
@@ -133,7 +127,7 @@ class AndroidBridge {
             return id;
         } catch (IOException | RuntimeException e) {
             Log.e(TAG, "beginSave failed", e);
-            saveListener.onFailed(name, "Tidak dapat menyiapkan penyimpanan sementara");
+            saveListener.onFailed(name, activity.getString(R.string.save_prepare_failed));
             return "";
         }
     }
@@ -147,7 +141,7 @@ class AndroidBridge {
             return true;
         } catch (IOException | IllegalArgumentException e) {
             Log.e(TAG, "appendChunk failed", e);
-            fail(id, "Gagal menulis berkas (penyimpanan penuh?)");
+            fail(id, activity.getString(R.string.save_write_failed));
             return false;
         }
     }
@@ -161,7 +155,7 @@ class AndroidBridge {
         } catch (IOException e) {
             Log.e(TAG, "finishSave close failed", e);
             deleteRecursive(s.dir);
-            saveListener.onFailed(s.name, "Gagal menyelesaikan berkas");
+            saveListener.onFailed(s.name, activity.getString(R.string.save_finish_failed));
             return;
         }
         SavedFile saved = new SavedFile(s.file, s.name, s.mime);
@@ -175,7 +169,7 @@ class AndroidBridge {
             saveListener.onSaved(saved, finalName);
         } catch (IOException | RuntimeException e) {
             Log.e(TAG, "saveToDownloads failed", e);
-            saveListener.onFailed(s.name, "Gagal menyimpan ke folder Download");
+            saveListener.onFailed(s.name, activity.getString(R.string.save_downloads_failed));
         }
     }
 
