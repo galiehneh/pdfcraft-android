@@ -27,6 +27,8 @@ import android.webkit.WebChromeClient;
 import android.webkit.RenderProcessGoneDetail;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebResourceResponse;
+import android.webkit.WebBackForwardList;
+import android.webkit.WebHistoryItem;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
@@ -77,6 +79,8 @@ public class MainActivity extends ComponentActivity {
     private long backPressedTime = 0;
     private Toast exitToast = null;
     private FileSaver fileSaver;
+    private AndroidBridge bridge;
+    private boolean paused;
     private final ExecutorService saveExecutor = Executors.newSingleThreadExecutor();
     private final ExecutorService importExecutor = Executors.newSingleThreadExecutor();
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
@@ -141,8 +145,24 @@ public class MainActivity extends ComponentActivity {
             }
         } else {
             setOverlayVisible(true);
-            webView.restoreState(savedInstanceState);
+            if (webView.restoreState(savedInstanceState) == null || restoredDocumentMissing()) {
+                currentDocumentName = null;
+                fab.setVisibility(View.VISIBLE);
+                loadUrlWithOverlay(BASE_URL);
+            }
         }
+    }
+
+    /** True when the restored history entry points at an imported /doc/ file that no longer exists. */
+    private boolean restoredDocumentMissing() {
+        WebBackForwardList list = webView.copyBackForwardList();
+        WebHistoryItem item = list == null ? null : list.getCurrentItem();
+        String url = item == null ? null : Uri.decode(item.getUrl());
+        if (url == null) return false;
+        int cut = url.indexOf("/doc/");
+        if (cut < 0) return false;
+        String id = FileImporter.docIdFromPath(url.substring(cut + 5));
+        return id == null || !importer.docFile(id).exists();
     }
 
     private View createLoadingOverlay() {
@@ -189,6 +209,7 @@ public class MainActivity extends ComponentActivity {
 
     @Override
     protected void onPause() {
+        paused = true;
         if (webView != null) webView.onPause();
         super.onPause();
     }
@@ -196,6 +217,7 @@ public class MainActivity extends ComponentActivity {
     @Override
     protected void onResume() {
         super.onResume();
+        paused = false;
         if (webView != null) webView.onResume();
     }
 
@@ -208,6 +230,7 @@ public class MainActivity extends ComponentActivity {
         destroyWebView(webView);
         webView = null;
         mainHandler.removeCallbacks(hideOverlay);
+        if (bridge != null) bridge.close();
         saveExecutor.shutdown();
         importExecutor.shutdown();
         super.onDestroy();
@@ -337,10 +360,10 @@ public class MainActivity extends ComponentActivity {
             }
         });
 
-        webView.addJavascriptInterface(
-                new AndroidBridge(this, webView, fileSaver, this::onDocumentOpened, saveListener,
-                        () -> setOverlayVisible(false)),
-                "PdfCraftAndroid");
+        // Kept as a JS interface: the shim relies on synchronous return values (beginSave/appendChunk).
+        bridge = new AndroidBridge(this, webView, fileSaver, this::onDocumentOpened, saveListener,
+                () -> setOverlayVisible(false));
+        webView.addJavascriptInterface(bridge, "PdfCraftAndroid");
 
         assetLoader = new WebViewAssetLoader.Builder()
                 .setDomain(HOST)
@@ -373,6 +396,11 @@ public class MainActivity extends ComponentActivity {
             public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
                 if (request == null || request.getUrl() == null) return null;
                 Uri uri = request.getUrl();
+                String scheme = uri.getScheme();
+                if (("https".equalsIgnoreCase(scheme) || "http".equalsIgnoreCase(scheme))
+                        && !HOST.equalsIgnoreCase(uri.getHost())) {
+                    return notFound(); // block external resources
+                }
                 if (shimViaScriptTag && isIndexRequest(uri)) {
                     WebResourceResponse patched = indexWithShimTag();
                     if (patched != null) return patched;
@@ -401,7 +429,6 @@ public class MainActivity extends ComponentActivity {
                 if (!launchPicker(chooserLauncher, accept, multiple)) {
                     filePathCallback = null;
                     callback.onReceiveValue(null);
-                    return false;
                 }
                 return true;
             }
@@ -525,7 +552,7 @@ public class MainActivity extends ComponentActivity {
     }
 
     private void handleIncomingIntent(Intent intent) {
-        Uri targetUri = FileImporter.uriFromIntent(intent);
+        Uri targetUri = importer.uriFromIntent(intent);
         if (targetUri != null) {
             handlePdfUri(targetUri);
         }
@@ -539,6 +566,7 @@ public class MainActivity extends ComponentActivity {
             try {
                 String name = importer.displayName(uri);
                 String id = importer.copyToCache(uri);
+                importer.cleanup(id); // same task: no race with a following import
                 runOnUiThread(() -> onImported(id, name));
             } catch (IOException | RuntimeException e) {
                 Log.e(TAG, "Error handling PDF URI: " + uri, e);
@@ -558,7 +586,6 @@ public class MainActivity extends ComponentActivity {
         if (fab != null) {
             fab.setVisibility(View.GONE);
         }
-        importExecutor.execute(() -> importer.cleanup(id));
         getWindow().getDecorView().performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY);
         Toast.makeText(this, getString(R.string.opening_pdf_name, name), Toast.LENGTH_SHORT).show();
     }
@@ -586,14 +613,16 @@ public class MainActivity extends ComponentActivity {
         reportSaveResult(true, name, "");
         if (isFinishing() || isDestroyed()) return;
         getWindow().getDecorView().performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS);
-        new AlertDialog.Builder(this)
+        AlertDialog.Builder dialog = new AlertDialog.Builder(this)
                 .setTitle(getString(R.string.saved_title))
                 .setMessage(getString(R.string.saved_message, name)
                         + (inDownloads ? "\n" + getString(R.string.saved_location_downloads) : ""))
-                .setPositiveButton(getString(R.string.action_open), (d, w) -> startSaveAction(SaveActions.view(this, file.file, file.mime)))
                 .setNeutralButton(getString(R.string.action_share), (d, w) -> startSaveAction(SaveActions.share(this, file.file, file.mime)))
-                .setNegativeButton(getString(R.string.action_save_as), (d, w) -> launchSaveAs(file, false))
-                .show();
+                .setNegativeButton(getString(R.string.action_save_as), (d, w) -> launchSaveAs(file, false));
+        if (!Mime.isOctetStream(file.mime)) {
+            dialog.setPositiveButton(getString(R.string.action_open), (d, w) -> startSaveAction(SaveActions.view(this, file.file, file.mime)));
+        }
+        dialog.show();
     }
 
     private void onSaveFailed(String name, String message) {
@@ -664,6 +693,7 @@ public class MainActivity extends ComponentActivity {
 
     private void recoverFromRendererLoss() {
         destroyWebView(webView);
+        if (bridge != null) bridge.close();
         if (filePathCallback != null) {
             filePathCallback.onReceiveValue(null);
             filePathCallback = null;
@@ -671,6 +701,7 @@ public class MainActivity extends ComponentActivity {
         webView = createWebView();
         rootLayout.addView(webView, 0);
         configureWebView();
+        if (paused) webView.onPause();
         currentDocumentName = null;
         fab.setVisibility(View.VISIBLE);
         loadUrlWithOverlay(BASE_URL);

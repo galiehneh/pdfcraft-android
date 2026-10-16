@@ -20,6 +20,8 @@
     <string name="save_prepare_failed">Tidak dapat menyiapkan penyimpanan sementara</string>
     <string name="save_write_failed">Gagal menulis berkas (penyimpanan penuh?)</string>
     <string name="save_finish_failed">Gagal menyelesaikan berkas</string>
+    <string name="save_limit_exceeded">Berkas terlalu besar untuk disimpan</string>
+    <string name="save_too_many">Terlalu banyak penyimpanan yang berjalan</string>
     <string name="save_downloads_failed">Gagal menyimpan ke folder Download</string>
     <string name="renderer_reloaded">Tampilan dimuat ulang karena kehabisan memori. Dokumen yang belum disimpan hilang.</string>
     <string name="exit_hint">Tekan sekali lagi untuk keluar</string>

@@ -60,18 +60,31 @@ class FileSaver {
         return finalName != null ? finalName : name;
     }
 
-    /** Copies {@code src} into a SAF document; removes the document if the copy fails. */
+    /** Copies {@code src} into a SAF document; removes the document on failure only if it was empty (newly created). */
     void saveToUri(File src, Uri uri) throws IOException {
+        boolean wasEmpty = sizeOf(uri) == 0; // an existing non-empty document is never deleted
         try {
             copy(src, uri);
         } catch (IOException | RuntimeException e) {
-            try {
-                DocumentsContract.deleteDocument(context.getContentResolver(), uri);
-            } catch (Exception ex) {
-                Log.w(TAG, "Cannot remove failed document", ex);
+            if (wasEmpty) {
+                try {
+                    DocumentsContract.deleteDocument(context.getContentResolver(), uri);
+                } catch (Exception ex) {
+                    Log.w(TAG, "Cannot remove failed document", ex);
+                }
             }
             throw e;
         }
+    }
+
+    private long sizeOf(Uri uri) {
+        try (Cursor c = context.getContentResolver()
+                .query(uri, new String[]{OpenableColumns.SIZE}, null, null, null)) {
+            if (c != null && c.moveToFirst() && !c.isNull(0)) return c.getLong(0);
+        } catch (RuntimeException e) {
+            Log.w(TAG, "Cannot read size", e);
+        }
+        return -1;
     }
 
     String displayName(Uri uri) {
@@ -86,7 +99,7 @@ class FileSaver {
 
     private void copy(File src, Uri dest) throws IOException {
         try (InputStream in = new FileInputStream(src);
-             OutputStream out = context.getContentResolver().openOutputStream(dest, "w")) {
+             OutputStream out = context.getContentResolver().openOutputStream(dest, "wt")) {
             if (out == null) throw new IOException("openOutputStream returned null");
             byte[] buf = new byte[64 * 1024];
             int n;

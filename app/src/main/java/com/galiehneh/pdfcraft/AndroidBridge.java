@@ -11,6 +11,10 @@ import android.webkit.WebView;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Iterator;
+import java.util.LinkedList;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -20,6 +24,34 @@ import java.util.function.Consumer;
 class AndroidBridge {
     private static final String TAG = "PdfCraft";
     static final String OUT_DIR = "out";
+    static final int MAX_CHUNK_BASE64_CHARS = 4 * 1024 * 1024;
+    static final long MAX_SESSION_BYTES = 1L << 30;
+    static final int MAX_SESSIONS = 4;
+    private static final int MAX_RETAINED = 5;
+    private static final long RETAIN_MS = 60 * 60 * 1000L;
+
+    /** Finished output dirs kept for open/share; static so a recreated bridge does not lose them. */
+    private static final LinkedList<Object[]> RETAINED = new LinkedList<>();
+
+    private static synchronized void retain(String dirName) {
+        RETAINED.addFirst(new Object[]{dirName, System.currentTimeMillis()});
+    }
+
+    /** Drops expired / surplus entries and returns the names still retained. */
+    private static synchronized List<String> prunedRetained() {
+        long now = System.currentTimeMillis();
+        List<String> keep = new ArrayList<>();
+        Iterator<Object[]> it = RETAINED.iterator();
+        while (it.hasNext()) {
+            Object[] e = it.next();
+            if (keep.size() >= MAX_RETAINED || now - (Long) e[1] > RETAIN_MS) {
+                it.remove();
+            } else {
+                keep.add((String) e[0]);
+            }
+        }
+        return keep;
+    }
 
     /** A fully written output file waiting for / past its final destination. */
     static final class SavedFile {
@@ -51,6 +83,7 @@ class AndroidBridge {
         final String name;
         final String mime;
         final FileOutputStream out;
+        long written;
 
         Session(File dir, File file, String name, String mime) throws IOException {
             this.dir = dir;
@@ -68,7 +101,6 @@ class AndroidBridge {
     private final SaveListener saveListener;
     private final Runnable onAppReady;
     private final Map<String, Session> sessions = new ConcurrentHashMap<>();
-    private volatile String retainedDir;
 
     AndroidBridge(Activity activity, WebView webView, FileSaver fileSaver,
                   Consumer<Boolean> onDocumentOpened, SaveListener saveListener,
@@ -116,8 +148,13 @@ class AndroidBridge {
     /** Starts a chunked save. Returns a session id, or "" on failure (failure is already reported). */
     @JavascriptInterface
     public String beginSave(String filename, String mime) {
-        String resolvedMime = Mime.resolve(mime, filename);
-        String name = Mime.finalFileName(filename, resolvedMime);
+        String[] safe = Mime.sanitizeForSave(mime, filename);
+        String resolvedMime = safe[0];
+        String name = safe[1];
+        if (sessions.size() >= MAX_SESSIONS) {
+            saveListener.onFailed(name, activity.getString(R.string.save_too_many));
+            return "";
+        }
         try {
             cleanupOldOutputs();
             String id = UUID.randomUUID().toString();
@@ -136,8 +173,18 @@ class AndroidBridge {
     public boolean appendChunk(String id, String base64) {
         Session s = id == null ? null : sessions.get(id);
         if (s == null || base64 == null) return false;
+        if (base64.length() > MAX_CHUNK_BASE64_CHARS) {
+            fail(id, activity.getString(R.string.save_limit_exceeded));
+            return false;
+        }
         try {
-            s.out.write(Base64.decode(base64, Base64.DEFAULT));
+            byte[] data = Base64.decode(base64, Base64.DEFAULT);
+            if (s.written + data.length > MAX_SESSION_BYTES) {
+                fail(id, activity.getString(R.string.save_limit_exceeded));
+                return false;
+            }
+            s.out.write(data);
+            s.written += data.length;
             return true;
         } catch (IOException | IllegalArgumentException e) {
             Log.e(TAG, "appendChunk failed", e);
@@ -148,8 +195,10 @@ class AndroidBridge {
 
     @JavascriptInterface
     public void finishSave(String id) {
-        Session s = id == null ? null : sessions.remove(id);
+        Session s = id == null ? null : sessions.get(id);
         if (s == null) return;
+        retain(s.dir.getName()); // before removal so cleanup never sees it as orphaned
+        if (sessions.remove(id) == null) return;
         try {
             s.out.close();
         } catch (IOException e) {
@@ -159,7 +208,6 @@ class AndroidBridge {
             return;
         }
         SavedFile saved = new SavedFile(s.file, s.name, s.mime);
-        retainedDir = s.dir.getName();
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
             saveListener.onNeedsDestination(saved);
             return;
@@ -181,6 +229,16 @@ class AndroidBridge {
         deleteRecursive(s.dir);
     }
 
+    /** Aborts every in-progress save and removes its directory. */
+    void close() {
+        for (String id : new ArrayList<>(sessions.keySet())) {
+            Session s = sessions.remove(id);
+            if (s == null) continue;
+            closeQuietly(s);
+            deleteRecursive(s.dir);
+        }
+    }
+
     private void fail(String id, String message) {
         Session s = sessions.remove(id);
         if (s == null) return;
@@ -197,12 +255,13 @@ class AndroidBridge {
         }
     }
 
-    /** Removes output dirs that are neither in progress nor the last finished one (still shared/opened). */
+    /** Removes output dirs that are neither in progress nor among the recently finished ones (still shared/opened). */
     private void cleanupOldOutputs() {
         File[] dirs = new File(activity.getCacheDir(), OUT_DIR).listFiles();
         if (dirs == null) return;
+        List<String> retained = prunedRetained();
         for (File dir : dirs) {
-            if (!sessions.containsKey(dir.getName()) && !dir.getName().equals(retainedDir)) {
+            if (!sessions.containsKey(dir.getName()) && !retained.contains(dir.getName())) {
                 deleteRecursive(dir);
             }
         }

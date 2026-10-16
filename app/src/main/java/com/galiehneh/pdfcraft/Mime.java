@@ -1,14 +1,44 @@
 package com.galiehneh.pdfcraft;
 
+import java.util.Arrays;
+import java.util.HashSet;
 import java.util.Locale;
+import java.util.Set;
 
 /** Pure-Java helpers: extension to MIME mapping and file-name sanitising. */
 final class Mime {
     static final String DEFAULT_FILE_NAME = "document.pdf";
     private static final int MAX_NAME_LENGTH = 120;
-    private static final String OCTET_STREAM = "application/octet-stream";
+    static final String OCTET_STREAM = "application/octet-stream";
+
+    private static final Set<String> SAFE_MIMES = new HashSet<>(Arrays.asList(
+            "application/pdf", "application/zip", "image/png", "image/jpeg", "image/webp", "image/gif",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            "text/plain", "application/json"));
+    private static final Set<String> SAFE_EXTENSIONS = new HashSet<>(Arrays.asList(
+            "pdf", "zip", "png", "jpg", "jpeg", "webp", "gif", "docx", "xlsx", "pptx", "txt", "json"));
 
     private Mime() {}
+
+    static boolean isOctetStream(String mime) {
+        return OCTET_STREAM.equals(mime);
+    }
+
+    /** Mime and name for a JS-supplied save: anything outside the allowlists becomes octet-stream / .bin. */
+    static String[] sanitizeForSave(String declaredMime, String fileName) {
+        String mime = resolve(declaredMime, fileName);
+        String name = finalFileName(fileName, mime);
+        int dot = name.lastIndexOf('.');
+        String ext = dot > 0 ? name.substring(dot + 1).toLowerCase(Locale.US) : "";
+        if (!SAFE_MIMES.contains(mime)) mime = OCTET_STREAM;
+        if (!SAFE_EXTENSIONS.contains(ext)) {
+            mime = OCTET_STREAM;
+            name = (dot > 0 ? name.substring(0, dot) : name) + ".bin";
+        }
+        return new String[]{mime, name};
+    }
 
     static String fromFileName(String path) {
         if (path == null) return OCTET_STREAM;

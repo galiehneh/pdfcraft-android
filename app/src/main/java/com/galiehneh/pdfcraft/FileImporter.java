@@ -18,6 +18,7 @@ import java.util.regex.Pattern;
 class FileImporter {
     static final String DOCS_DIR = "docs";
     private static final Pattern DOC_ID = Pattern.compile("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}");
+    static final long MAX_IMPORT_BYTES = 500L * 1024 * 1024;
     private final Context context;
 
     FileImporter(Context context) {
@@ -53,7 +54,7 @@ class FileImporter {
     }
 
     /** Extracts the file URI from a VIEW or SEND intent, or null. */
-    static Uri uriFromIntent(Intent intent) {
+    Uri uriFromIntent(Intent intent) {
         String action = intent.getAction();
         Uri uri = null;
         if (Intent.ACTION_VIEW.equals(action)) {
@@ -68,7 +69,13 @@ class FileImporter {
         if (uri == null && intent.getClipData() != null && intent.getClipData().getItemCount() > 0) {
             uri = intent.getClipData().getItemAt(0).getUri();
         }
-        return uri;
+        return isAllowedSource(uri) ? uri : null;
+    }
+
+    /** Only content:// URIs, and never this app's own FileProvider. */
+    boolean isAllowedSource(Uri uri) {
+        return uri != null && "content".equals(uri.getScheme())
+                && !(context.getPackageName() + ".fileprovider").equalsIgnoreCase(uri.getAuthority());
     }
 
     /** Result of a chooser pick: single data URI or all clip items; null when nothing picked. */
@@ -90,6 +97,7 @@ class FileImporter {
 
     /** Copies the URI content into cacheDir/docs/<id>.pdf and returns the new id. Blocking I/O. */
     String copyToCache(Uri uri) throws IOException {
+        if (!isAllowedSource(uri)) throw new IOException("Rejected source " + uri);
         File dir = new File(context.getCacheDir(), DOCS_DIR);
         if (!dir.isDirectory() && !dir.mkdirs()) throw new IOException("Cannot create " + dir);
         String id = UUID.randomUUID().toString();
@@ -99,7 +107,10 @@ class FileImporter {
             if (is == null) throw new IOException("Cannot open " + uri);
             byte[] buffer = new byte[32768];
             int read;
+            long total = 0;
             while ((read = is.read(buffer)) != -1) {
+                total += read;
+                if (total > MAX_IMPORT_BYTES) throw new IOException("File too large");
                 fos.write(buffer, 0, read);
             }
         } catch (IOException | RuntimeException e) {
