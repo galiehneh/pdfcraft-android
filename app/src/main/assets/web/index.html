@@ -2,66 +2,149 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>PdfCraft</title>
     
 <script type="module">
-import init, * as bindings from './pdfcraft-web-36b069bb96944220.js';
-const wasm = await init({ module_or_path: './pdfcraft-web-36b069bb96944220_bg.wasm' });
+import init, * as bindings from './pdfcraft-web-cbaabb1ae3c22ce7.js';
+const wasm = await init({ module_or_path: './pdfcraft-web-cbaabb1ae3c22ce7_bg.wasm' });
+
 
 window.wasmBindings = bindings;
 
+
 dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
-</script>
-<script>
-(function() {
-  const origClick = HTMLAnchorElement.prototype.click;
-  HTMLAnchorElement.prototype.click = function() {
-    if (this.href && this.href.startsWith("blob:") && window.PdfCraftAndroid) {
-      const href = this.href;
-      const filename = this.download || "document.pdf";
-      fetch(href)
-        .then(function(res) { return res.blob(); })
-        .then(function(blob) {
-          const reader = new FileReader();
-          reader.onloadend = function() {
-            if (window.PdfCraftAndroid && window.PdfCraftAndroid.saveBlob) {
-              window.PdfCraftAndroid.saveBlob(reader.result, filename);
-            }
-          };
-          reader.readAsDataURL(blob);
-        })
-        .catch(function(err) {
-          console.error("Blob download interception error:", err);
-        });
-    }
-    return origClick.apply(this, arguments);
-  };
 
-  window.handleAndroidBack = function() {
-    const ev = new KeyboardEvent('keydown', {
-      key: 'Escape',
-      code: 'Escape',
-      keyCode: 27,
-      which: 27,
-      bubbles: true
-    });
-    window.dispatchEvent(ev);
-    document.dispatchEvent(ev);
-  };
-
-  document.addEventListener('contextmenu', function(e) {
-    e.preventDefault();
-  }, false);
-})();
 </script>
     <style>
       html, body { margin: 0; height: 100%; overflow: hidden; background: #f1f1f3; touch-action: none; }
       canvas { width: 100%; height: 100%; display: block; outline: none; touch-action: none; }
       @media (prefers-color-scheme: dark) { html, body { background: #19191c; } }
     </style>
-  <link rel="modulepreload" href="./pdfcraft-web-36b069bb96944220.js" crossorigin="anonymous" integrity="sha384-H+wGtt/h4WBgDWjorME0YcZb0Zc0ZGLfTstvnpiaStvsuzMvI/gw6F4bmbLP04Z6"><link rel="preload" href="./pdfcraft-web-36b069bb96944220_bg.wasm" crossorigin="anonymous" integrity="sha384-ICbLF6JRaNBXXg7tEjbvBpqtW2MJRGpZrib4jgVLIwBczXQBTS/PhHIsrTeXUk72" as="fetch" type="application/wasm"></head>
+    <script>
+      (function() {
+        // Helper to find the hidden input element created by eframe TextAgent
+        function getTextAgentInput() {
+          return document.querySelector('input[type="text"]') || document.querySelector('input');
+        }
+
+        function notifyShowKeyboard() {
+          if (window.PdfCraftAndroid && window.PdfCraftAndroid.showKeyboard) {
+            window.PdfCraftAndroid.showKeyboard();
+          }
+        }
+
+        function notifyHideKeyboard() {
+          if (window.PdfCraftAndroid && window.PdfCraftAndroid.hideKeyboard) {
+            window.PdfCraftAndroid.hideKeyboard();
+          }
+        }
+
+        window.showSoftKeyboard = function() {
+          const input = getTextAgentInput();
+          if (input) {
+            try { input.focus({ preventScroll: true }); } catch (e) { input.focus(); }
+          }
+          notifyShowKeyboard();
+        };
+
+        window.hideSoftKeyboard = function() {
+          const input = getTextAgentInput();
+          if (input) {
+            try { input.blur(); } catch (e) {}
+          }
+          notifyHideKeyboard();
+        };
+
+        window.setPdfCraftEditMode = function(on) {
+          window.isPdfCraftEditMode = on;
+          if (!on) {
+            window.hideSoftKeyboard();
+          }
+        };
+
+        window.setDocumentOpened = function(opened) {
+          if (window.PdfCraftAndroid && window.PdfCraftAndroid.setDocumentOpened) {
+            window.PdfCraftAndroid.setDocumentOpened(opened);
+          }
+        };
+
+        function hookAgentInput(input) {
+          if (!input || input.__agentHooked) return;
+          input.__agentHooked = true;
+          input.addEventListener('focus', function() {
+            notifyShowKeyboard();
+          });
+          input.addEventListener('blur', function() {
+            notifyHideKeyboard();
+          });
+        }
+
+        const agentObserver = new MutationObserver(function() {
+          const input = getTextAgentInput();
+          if (input) hookAgentInput(input);
+        });
+        agentObserver.observe(document.documentElement, { childList: true, subtree: true });
+
+        // When canvas is tapped on mobile:
+        document.addEventListener('DOMContentLoaded', function() {
+          const canvas = document.getElementById('pdfcraft');
+          if (canvas) {
+            canvas.setAttribute('tabindex', '0');
+            canvas.addEventListener('touchend', function(e) {
+              const input = getTextAgentInput();
+              if (window.isPdfCraftEditMode) {
+                if (input) {
+                  try { input.focus({ preventScroll: true }); } catch (err) { input.focus(); }
+                }
+                notifyShowKeyboard();
+              }
+            }, { passive: true });
+          }
+        });
+
+        const origClick = HTMLAnchorElement.prototype.click;
+        HTMLAnchorElement.prototype.click = function() {
+          if (this.href && this.href.startsWith("blob:") && window.PdfCraftAndroid) {
+            const href = this.href;
+            const filename = this.download || "document.pdf";
+            fetch(href)
+              .then(function(res) { return res.blob(); })
+              .then(function(blob) {
+                const reader = new FileReader();
+                reader.onloadend = function() {
+                  if (window.PdfCraftAndroid && window.PdfCraftAndroid.saveBlob) {
+                    window.PdfCraftAndroid.saveBlob(reader.result, filename);
+                  }
+                };
+                reader.readAsDataURL(blob);
+              })
+              .catch(function(err) {
+                console.error("Blob download interception error:", err);
+              });
+          }
+          return origClick.apply(this, arguments);
+        };
+
+        window.handleAndroidBack = function() {
+          const ev = new KeyboardEvent('keydown', {
+            key: 'Escape',
+            code: 'Escape',
+            keyCode: 27,
+            which: 27,
+            bubbles: true
+          });
+          window.dispatchEvent(ev);
+          document.dispatchEvent(ev);
+        };
+
+        document.addEventListener('contextmenu', function(e) {
+          e.preventDefault();
+        }, false);
+      })();
+    </script>
+  <link rel="modulepreload" href="./pdfcraft-web-cbaabb1ae3c22ce7.js" crossorigin="anonymous" integrity="sha384-B6lV1v+Shp5RTNfAcHF2P73L/icZElVVQeZoUXJxIUKshRxERQr/Etg/wrEKc0T4"><link rel="preload" href="./pdfcraft-web-cbaabb1ae3c22ce7_bg.wasm" crossorigin="anonymous" integrity="sha384-QSIhlYjPiVxjxobgFQO/+IiOjsbzXf3h9eZV5YU+T8fqdtaarE7vjy+UcC7W2zfp" as="fetch" type="application/wasm"></head>
   <body>
-    <canvas id="pdfcraft"></canvas>
+    <canvas id="pdfcraft" tabindex="0"></canvas>
   </body>
 </html>
