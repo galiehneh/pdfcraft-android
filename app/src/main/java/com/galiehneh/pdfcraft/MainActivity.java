@@ -1,28 +1,18 @@
 package com.galiehneh.pdfcraft;
 
-import android.app.Activity;
 import android.content.ActivityNotFoundException;
-import android.content.ContentResolver;
-import android.content.ContentValues;
 import android.content.Intent;
-import android.database.Cursor;
 import android.graphics.Color;
 import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
-import android.os.Environment;
-import android.provider.MediaStore;
-import android.provider.OpenableColumns;
-import android.util.Base64;
 import android.util.Log;
 import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
-import android.view.inputmethod.InputMethodManager;
-import android.webkit.JavascriptInterface;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceRequest;
@@ -34,23 +24,35 @@ import android.widget.FrameLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import androidx.activity.ComponentActivity;
+import androidx.webkit.WebViewAssetLoader;
+import androidx.webkit.WebViewCompat;
+import androidx.webkit.WebViewFeature;
+
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
-import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.OutputStream;
+import java.nio.charset.StandardCharsets;
+import java.util.Collections;
 import java.util.HashMap;
-import java.util.Locale;
 import java.util.Map;
 
-public class MainActivity extends Activity {
+public class MainActivity extends ComponentActivity {
     private static final String TAG = "PdfCraft";
-    private static final String BASE_URL = "https://appassets.androidplatform.net/index.html";
+    private static final String HOST = "appassets.androidplatform.net";
+    private static final String ORIGIN = "https://" + HOST;
+    private static final String BASE_URL = ORIGIN + "/index.html";
+    private static final String SHIM_ASSET = "android/shim.js";
     private static final int FILE_CHOOSER_REQUEST = 1001;
     private static final int DIRECT_PICKER_REQUEST = 1002;
 
     private WebView webView;
+    private WebViewAssetLoader assetLoader;
+    private FileImporter importer;
+    private boolean shimViaScriptTag = false;
     private ValueCallback<Uri[]> filePathCallback;
     private String currentDocumentName = null;
     private TextView fab;
@@ -75,16 +77,17 @@ public class MainActivity extends Activity {
         ));
         rootLayout.addView(webView);
 
-        // Floating Action Button "📂 Pilih PDF" (ditampilkan saat belum ada dokumen)
+        // Floating Action Button "Buka PDF" (ditampilkan saat belum ada dokumen)
         fab = createFabButton();
         rootLayout.addView(fab);
 
         setContentView(rootLayout);
 
+        importer = new FileImporter(this);
         configureWebView();
 
         Intent intent = getIntent();
-        if (intent != null && hasPdfAction(intent)) {
+        if (intent != null && FileImporter.isIncomingAction(intent)) {
             handleIncomingIntent(intent);
         } else if (savedInstanceState == null) {
             webView.loadUrl(BASE_URL);
@@ -97,14 +100,9 @@ public class MainActivity extends Activity {
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         setIntent(intent);
-        if (intent != null && hasPdfAction(intent)) {
+        if (intent != null && FileImporter.isIncomingAction(intent)) {
             handleIncomingIntent(intent);
         }
-    }
-
-    private boolean hasPdfAction(Intent intent) {
-        String action = intent.getAction();
-        return Intent.ACTION_VIEW.equals(action) || Intent.ACTION_SEND.equals(action);
     }
 
     private TextView createFabButton() {
@@ -219,52 +217,30 @@ public class MainActivity extends Activity {
             }
         });
 
-        webView.addJavascriptInterface(new AndroidDownloadBridge(), "PdfCraftAndroid");
+        webView.addJavascriptInterface(
+                new AndroidBridge(this, webView, new FileSaver(this), this::onDocumentOpened),
+                "PdfCraftAndroid");
+
+        assetLoader = new WebViewAssetLoader.Builder()
+                .setDomain(HOST)
+                .setHttpAllowed(false)
+                .addPathHandler("/doc/", this::handleDocument)
+                .addPathHandler("/android/", path -> openAsset("android/" + path))
+                .addPathHandler("/", path -> openAsset("web/" + (path.isEmpty() ? "index.html" : path)))
+                .build();
+
+        installShim();
 
         webView.setWebViewClient(new WebViewClient() {
             @Override
             public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
                 if (request == null || request.getUrl() == null) return null;
                 Uri uri = request.getUrl();
-                String host = uri.getHost();
-                if ("appassets.androidplatform.net".equalsIgnoreCase(host) || "localhost".equalsIgnoreCase(host)) {
-                    String path = uri.getPath();
-                    if (path == null || path.isEmpty() || path.equals("/")) {
-                        path = "/index.html";
-                    }
-
-                    // Intercept incoming / current document PDF
-                    if (path.startsWith("/doc/") || "/current_document.pdf".equalsIgnoreCase(path)) {
-                        File cachedFile = new File(getCacheDir(), "current_document.pdf");
-                        if (cachedFile.exists()) {
-                            try {
-                                InputStream is = new FileInputStream(cachedFile);
-                                Map<String, String> headers = new HashMap<>();
-                                headers.put("Access-Control-Allow-Origin", "*");
-                                headers.put("Cache-Control", "no-cache");
-                                return new WebResourceResponse("application/pdf", "UTF-8", 200, "OK", headers, is);
-                            } catch (IOException e) {
-                                Log.e(TAG, "Cannot stream cached PDF", e);
-                            }
-                        }
-                    }
-
-                    if (path.startsWith("/")) {
-                        path = path.substring(1);
-                    }
-                    try {
-                        InputStream stream = getAssets().open("web/" + path);
-                        String mime = getMimeType(path);
-                        Map<String, String> headers = new HashMap<>();
-                        headers.put("Access-Control-Allow-Origin", "*");
-                        headers.put("Cache-Control", "no-cache");
-                        return new WebResourceResponse(mime, "UTF-8", 200, "OK", headers, stream);
-                    } catch (IOException e) {
-                        Log.w(TAG, "Asset not found: web/" + path);
-                        return new WebResourceResponse("text/plain", "UTF-8", 404, "Not Found", null, null);
-                    }
+                if (shimViaScriptTag && isIndexRequest(uri)) {
+                    WebResourceResponse patched = indexWithShimTag();
+                    if (patched != null) return patched;
                 }
-                return super.shouldInterceptRequest(view, request);
+                return assetLoader.shouldInterceptRequest(uri);
             }
         });
 
@@ -276,10 +252,7 @@ public class MainActivity extends Activity {
                 }
                 filePathCallback = callback;
 
-                Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
-                intent.addCategory(Intent.CATEGORY_OPENABLE);
-                intent.setType("application/pdf");
-
+                Intent intent = FileImporter.openDocumentIntent();
                 if (params != null && params.getMode() == FileChooserParams.MODE_OPEN_MULTIPLE) {
                     intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
                 }
@@ -288,10 +261,7 @@ public class MainActivity extends Activity {
                     startActivityForResult(intent, FILE_CHOOSER_REQUEST);
                 } catch (ActivityNotFoundException e) {
                     try {
-                        Intent fallback = new Intent(Intent.ACTION_GET_CONTENT);
-                        fallback.addCategory(Intent.CATEGORY_OPENABLE);
-                        fallback.setType("application/pdf");
-                        startActivityForResult(Intent.createChooser(fallback, "Pilih Dokumen PDF"), FILE_CHOOSER_REQUEST);
+                        startActivityForResult(FileImporter.getContentChooser(), FILE_CHOOSER_REQUEST);
                     } catch (Exception ex) {
                         Log.e(TAG, "Cannot launch file chooser", ex);
                         if (filePathCallback != null) {
@@ -306,18 +276,97 @@ public class MainActivity extends Activity {
         });
     }
 
-    private void openDirectPdfPicker() {
-        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
-        intent.addCategory(Intent.CATEGORY_OPENABLE);
-        intent.setType("application/pdf");
+    /** Injects the native-owned shim at document start, restricted to the app origin. */
+    private void installShim() {
+        if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
+            try {
+                WebViewCompat.addDocumentStartJavaScript(
+                        webView, readAssetText(SHIM_ASSET), Collections.singleton(ORIGIN));
+                return;
+            } catch (IOException e) {
+                Log.e(TAG, "Cannot read shim asset", e);
+            }
+        }
+        shimViaScriptTag = true;
+    }
+
+    private String readAssetText(String assetPath) throws IOException {
+        try (InputStream is = getAssets().open(assetPath)) {
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            byte[] buf = new byte[8192];
+            int n;
+            while ((n = is.read(buf)) != -1) {
+                out.write(buf, 0, n);
+            }
+            return out.toString("UTF-8");
+        }
+    }
+
+    private static boolean isIndexRequest(Uri uri) {
+        if (!HOST.equalsIgnoreCase(uri.getHost())) return false;
+        String path = uri.getPath();
+        return path == null || path.isEmpty() || "/".equals(path) || "/index.html".equals(path);
+    }
+
+    /** Fallback when DOCUMENT_START_SCRIPT is unsupported: serve index.html with a shim script tag. */
+    private WebResourceResponse indexWithShimTag() {
         try {
-            startActivityForResult(intent, DIRECT_PICKER_REQUEST);
+            String html = readAssetText("web/index.html")
+                    .replaceFirst("<head>", "<head><script src=\"/android/shim.js\"></script>");
+            return new WebResourceResponse("text/html", "UTF-8", 200, "OK", noCacheHeaders(),
+                    new ByteArrayInputStream(html.getBytes(StandardCharsets.UTF_8)));
+        } catch (IOException e) {
+            Log.e(TAG, "Cannot patch index.html", e);
+            return null;
+        }
+    }
+
+    private WebResourceResponse openAsset(String assetPath) {
+        try {
+            return new WebResourceResponse(Mime.fromFileName(assetPath), "UTF-8", 200, "OK",
+                    noCacheHeaders(), getAssets().open(assetPath));
+        } catch (IOException e) {
+            Log.w(TAG, "Asset not found: " + assetPath);
+            return notFound();
+        }
+    }
+
+    /** Serves the imported document for any /doc/* request. */
+    private WebResourceResponse handleDocument(String path) {
+        File cachedFile = new File(getCacheDir(), FileImporter.CACHE_FILE_NAME);
+        if (cachedFile.exists()) {
+            try {
+                return new WebResourceResponse("application/pdf", "UTF-8", 200, "OK",
+                        noCacheHeaders(), new FileInputStream(cachedFile));
+            } catch (IOException e) {
+                Log.e(TAG, "Cannot stream cached PDF", e);
+            }
+        }
+        return notFound();
+    }
+
+    private static Map<String, String> noCacheHeaders() {
+        Map<String, String> headers = new HashMap<>();
+        headers.put("Cache-Control", "no-cache");
+        return headers;
+    }
+
+    private static WebResourceResponse notFound() {
+        return new WebResourceResponse("text/plain", "UTF-8", 404, "Not Found", null, null);
+    }
+
+    private void onDocumentOpened(boolean opened) {
+        if (fab != null) {
+            fab.setVisibility(opened ? View.GONE : View.VISIBLE);
+        }
+    }
+
+    private void openDirectPdfPicker() {
+        try {
+            startActivityForResult(FileImporter.openDocumentIntent(), DIRECT_PICKER_REQUEST);
         } catch (ActivityNotFoundException e) {
             try {
-                Intent fallback = new Intent(Intent.ACTION_GET_CONTENT);
-                fallback.addCategory(Intent.CATEGORY_OPENABLE);
-                fallback.setType("application/pdf");
-                startActivityForResult(Intent.createChooser(fallback, "Pilih Dokumen PDF"), DIRECT_PICKER_REQUEST);
+                startActivityForResult(FileImporter.getContentChooser(), DIRECT_PICKER_REQUEST);
             } catch (Exception ex) {
                 Toast.makeText(this, "Tidak ada aplikasi pemilih berkas", Toast.LENGTH_SHORT).show();
             }
@@ -325,19 +374,7 @@ public class MainActivity extends Activity {
     }
 
     private void handleIncomingIntent(Intent intent) {
-        Uri targetUri = null;
-        String action = intent.getAction();
-
-        if (Intent.ACTION_VIEW.equals(action)) {
-            targetUri = intent.getData();
-        } else if (Intent.ACTION_SEND.equals(action)) {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                targetUri = intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri.class);
-            } else {
-                targetUri = (Uri) intent.getParcelableExtra(Intent.EXTRA_STREAM);
-            }
-        }
-
+        Uri targetUri = FileImporter.uriFromIntent(intent);
         if (targetUri != null) {
             handlePdfUri(targetUri);
         }
@@ -345,18 +382,9 @@ public class MainActivity extends Activity {
 
     private void handlePdfUri(Uri uri) {
         try {
-            String name = getFileNameFromUri(uri);
+            String name = importer.displayName(uri);
             this.currentDocumentName = name;
-
-            File dest = new File(getCacheDir(), "current_document.pdf");
-            try (InputStream is = getContentResolver().openInputStream(uri);
-                 FileOutputStream fos = new FileOutputStream(dest)) {
-                byte[] buffer = new byte[32768];
-                int read;
-                while ((read = is.read(buffer)) != -1) {
-                    fos.write(buffer, 0, read);
-                }
-            }
+            importer.copyToCache(uri);
 
             String encodedName = Uri.encode(name);
             String url = BASE_URL + "?file=/doc/" + encodedName + "&t=" + System.currentTimeMillis();
@@ -374,47 +402,6 @@ public class MainActivity extends Activity {
         }
     }
 
-    private String getFileNameFromUri(Uri uri) {
-        String result = "document.pdf";
-        if (uri == null) return result;
-        if ("content".equalsIgnoreCase(uri.getScheme())) {
-            try (Cursor cursor = getContentResolver().query(uri, null, null, null, null)) {
-                if (cursor != null && cursor.moveToFirst()) {
-                    int nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME);
-                    if (nameIndex != -1) {
-                        String name = cursor.getString(nameIndex);
-                        if (name != null && !name.trim().isEmpty()) {
-                            result = name;
-                        }
-                    }
-                }
-            } catch (Exception ignored) {}
-        } else {
-            String path = uri.getPath();
-            if (path != null) {
-                int cut = path.lastIndexOf('/');
-                if (cut != -1) {
-                    result = path.substring(cut + 1);
-                }
-            }
-        }
-        return result;
-    }
-
-    private String getMimeType(String path) {
-        String normalized = path.toLowerCase(Locale.US);
-        if (normalized.endsWith(".html")) return "text/html";
-        if (normalized.endsWith(".js")) return "text/javascript";
-        if (normalized.endsWith(".wasm")) return "application/wasm";
-        if (normalized.endsWith(".css")) return "text/css";
-        if (normalized.endsWith(".json")) return "application/json";
-        if (normalized.endsWith(".png")) return "image/png";
-        if (normalized.endsWith(".jpg") || normalized.endsWith(".jpeg")) return "image/jpeg";
-        if (normalized.endsWith(".svg")) return "image/svg+xml";
-        if (normalized.endsWith(".txt")) return "text/plain";
-        return "application/octet-stream";
-    }
-
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
@@ -425,15 +412,7 @@ public class MainActivity extends Activity {
                     if (fab != null) {
                         fab.setVisibility(View.GONE);
                     }
-                    if (data.getData() != null) {
-                        results = new Uri[]{data.getData()};
-                    } else if (data.getClipData() != null) {
-                        int count = data.getClipData().getItemCount();
-                        results = new Uri[count];
-                        for (int i = 0; i < count; i++) {
-                            results[i] = data.getClipData().getItemAt(i).getUri();
-                        }
-                    }
+                    results = FileImporter.urisFromChooserResult(data);
                 }
                 filePathCallback.onReceiveValue(results);
                 filePathCallback = null;
@@ -489,102 +468,6 @@ public class MainActivity extends Activity {
         super.onSaveInstanceState(outState);
         if (webView != null) {
             webView.saveState(outState);
-        }
-    }
-
-    private class AndroidDownloadBridge {
-        @JavascriptInterface
-        public void showKeyboard() {
-            runOnUiThread(() -> {
-                if (webView != null) {
-                    webView.requestFocus();
-                    InputMethodManager imm = (InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
-                    if (imm != null) {
-                        boolean ok = imm.showSoftInput(webView, InputMethodManager.SHOW_IMPLICIT);
-                        if (!ok) {
-                            ok = imm.showSoftInput(webView, 0);
-                        }
-                        if (!ok) {
-                            imm.toggleSoftInput(InputMethodManager.SHOW_FORCED, 0);
-                        }
-                    }
-                }
-            });
-        }
-
-        @JavascriptInterface
-        public void hideKeyboard() {
-            runOnUiThread(() -> {
-                if (webView != null) {
-                    InputMethodManager imm = (InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
-                    if (imm != null) {
-                        imm.hideSoftInputFromWindow(webView.getWindowToken(), 0);
-                    }
-                }
-            });
-        }
-
-        @JavascriptInterface
-        public void setDocumentOpened(boolean opened) {
-            runOnUiThread(() -> {
-                if (fab != null) {
-                    fab.setVisibility(opened ? View.GONE : View.VISIBLE);
-                }
-            });
-        }
-
-        @JavascriptInterface
-        public void saveBlob(String dataUrl, String filename) {
-            if (dataUrl == null || !dataUrl.contains(",")) return;
-            String base64Data = dataUrl.substring(dataUrl.indexOf(",") + 1);
-            try {
-                byte[] bytes = Base64.decode(base64Data, Base64.DEFAULT);
-                String safeName = (filename != null && !filename.isEmpty()) ? filename : "document.pdf";
-                boolean saved = saveFileToDownloads(safeName, bytes);
-                runOnUiThread(() -> {
-                    if (saved) {
-                        getWindow().getDecorView().performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS);
-                        Toast.makeText(MainActivity.this, "Berhasil disimpan ke Download: " + safeName, Toast.LENGTH_LONG).show();
-                    } else {
-                        Toast.makeText(MainActivity.this, "Gagal menyimpan berkas", Toast.LENGTH_SHORT).show();
-                    }
-                });
-            } catch (Exception e) {
-                Log.e(TAG, "Failed saving blob", e);
-            }
-        }
-
-        private boolean saveFileToDownloads(String filename, byte[] bytes) {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                ContentResolver resolver = getContentResolver();
-                ContentValues contentValues = new ContentValues();
-                contentValues.put(MediaStore.MediaColumns.DISPLAY_NAME, filename);
-                contentValues.put(MediaStore.MediaColumns.MIME_TYPE, "application/pdf");
-                contentValues.put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS);
-
-                Uri uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, contentValues);
-                if (uri == null) return false;
-                try (OutputStream os = resolver.openOutputStream(uri)) {
-                    if (os != null) {
-                        os.write(bytes);
-                        return true;
-                    }
-                } catch (IOException e) {
-                    Log.e(TAG, "Error writing to MediaStore", e);
-                }
-                return false;
-            } else {
-                File dir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
-                if (!dir.exists()) dir.mkdirs();
-                File file = new File(dir, filename);
-                try (FileOutputStream fos = new FileOutputStream(file)) {
-                    fos.write(bytes);
-                    return true;
-                } catch (IOException e) {
-                    Log.e(TAG, "Error writing to file", e);
-                    return false;
-                }
-            }
         }
     }
 }
