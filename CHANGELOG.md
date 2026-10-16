@@ -4,12 +4,55 @@ Semua perubahan penting pada proyek **PdfCraft Android** didokumentasikan dalam 
 
 ---
 
+## [Unreleased]
+
+Catatan: `versionCode` adalah counter yang naik per rilis, **bukan** tanggal. Jangan menurunkannya atau menyesuaikannya ke tanggal; `versionName` yang memakai skema `YYYY.MM.DD[.patch]`.
+
+### Arsitektur & Stabilitas
+- Memecah `MainActivity` menjadi `AndroidBridge`, `FileImporter`, `FileSaver`, `SaveActions`, dan `Mime`; aset web disajikan lewat `WebViewAssetLoader`.
+- Mencegah kehilangan data saat Back, perubahan konfigurasi, dan crash renderer WebView (aplikasi pulih).
+
+### Simpan & Impor Berkas
+- Simpan berkas besar secara streaming (chunk base64) ke cache lalu ke `Download/`, dengan MIME dan ekstensi yang benar serta aksi Buka/Bagikan. Di API 24-28 lewat SAF.
+- Batas aman: 1 GiB per sesi, 4 sesi bersamaan, 4 MiB base64 per chunk; sesi dibersihkan saat gagal.
+- Impor berkas mengikuti `accept` dari input web, berjalan di luar UI thread, dengan overlay loading dan validasi.
+- Perbaikan hasil review: batas simpan, validasi impor, dan race pada pembersihan berkas sementara.
+
+### UI Native
+- Penanganan IME dan display cutout, tema malam, dan string native berbahasa Indonesia/Inggris.
+- Hardening WebView: navigasi, akses berkas, dan manifest.
+
+### Build, CI & Dokumentasi
+- Rilis memakai R8 (`isMinifyEnabled`, `isShrinkResources`) dengan keep rule untuk bridge `PdfCraftAndroid`; signing v3 diaktifkan.
+- CI: setup-gradle, lint, `testDebugUnitTest`, `assembleDebug`; pada tag `v*` membangun APK rilis bertanda tangan dari secrets dan mengunggahnya ke GitHub Release.
+- Unit test JVM untuk `Mime` dan batas sesi simpan.
+- Menambahkan `app/src/main/assets/web/BUNDLE.md` (asal bundle web).
+
+---
+
 ## [2026.10.16.2] - 2026-10-16
 
 ### Navigasi & UX Exit Aplikasi
 - **Double Back to Exit di Beranda:** Menambahkan proteksi keluar aplikasi saat berada di beranda (home), di mana pengguna harus menekan tombol kembali 2x dalam jeda waktu 2 detik untuk keluar dari aplikasi.
 - **Flash Info (Toast):** Memberikan pemberitahuan flash info "Tekan sekali lagi untuk keluar" saat penekanan tombol kembali pertama kali di beranda agar pengguna paham dan mencegah aplikasi tertutup tanpa sengaja.
 - **Pembersihan Riwayat Navigasi WebView:** Menghapus riwayat navigasi (`clearHistory`) saat kembali dari dokumen ke beranda untuk mencegah desinkronisasi tumpukan navigasi Android.
+
+---
+
+## [2026.10.16.1] - 2026-10-16
+
+### Perbaikan
+- **Sticky note composer:** pemicu keyboard untuk komposer sticky note ditambahkan di bundle web.
+- **Fallback keyboard:** `showSoftInput` kini dicoba `SHOW_IMPLICIT`, lalu flag `0`, lalu `toggleSoftInput(SHOW_FORCED)` bila gagal, sehingga keyboard muncul di perangkat yang menolak permintaan implisit.
+
+---
+
+## [2026.10.16] - 2026-10-16
+
+### Keyboard & Fokus
+- **Jembatan soft keyboard:** `showKeyboard`/`hideKeyboard` diekspos ke web agar keyboard sistem muncul saat input teks di canvas difokuskan.
+- **Fokus sentuh:** perbaikan fokus input pada interaksi sentuh di WebView.
+- **Visibilitas FAB dinamis:** tombol buka berkas mengambang disembunyikan saat dokumen terbuka dan ditampilkan kembali di beranda.
 
 ---
 

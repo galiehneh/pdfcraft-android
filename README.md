@@ -15,6 +15,8 @@ Porting & Packaging dari [storytold/pdfcraft](https://github.com/storytold/pdfcr
   - Form Filling & Annotations: Isi formulir interaktif, bubuhkan komentar, markup, highlight, serta tanda tangan digital.
   - Optimize & Clean: Kompresi ukuran berkas, OCR, dan sanitasi metadata.
 - **Android Storage Integration:**
+  - Simpan berkas besar secara streaming (batas 1 GiB per berkas) dengan MIME/ekstensi benar, lalu aksi Buka/Bagikan.
+  - Pemilih berkas mengikuti tipe yang diminta aplikasi; impor tidak memblokir UI.
   - Terintegrasi langsung dengan Android Storage Access Framework (SAF) untuk memilih berkas dari memori internal / Google Drive / SD Card.
   - Fitur simpan berkas langsung mengalir ke folder publik `Download/` perangkat Android.
 
@@ -35,8 +37,8 @@ Porting & Packaging dari [storytold/pdfcraft](https://github.com/storytold/pdfcr
 ## Spesifikasi Build
 
 - **Application ID:** `com.galiehneh.pdfcraft`
-- **Version Name:** `2026.10.13.1`
-- **Version Code:** `20261016`
+- **Version Name:** `2026.10.16.2`
+- **Version Code:** `20261024` (counter rilis, bukan tanggal)
 - **Minimum SDK:** Android 7.0 (API 24)
 - **Target SDK:** Android 15 (API 35)
 
@@ -66,7 +68,24 @@ Riwayat perubahan lengkap dapat dilihat di [CHANGELOG.md](CHANGELOG.md).
 ./gradlew assembleRelease
 ```
 Berkas APK akan dihasilkan di:
-`app/build/outputs/apk/release/app-release.apk`
+`app/build/outputs/apk/release/`
+
+Rilis memakai R8 (shrink kode dan resource). Bila `signing/release-signing.properties` ada (gitignored, lihat `.example`), APK ditandatangani (v1/v2/v3); jika tidak, hasilnya unsigned.
+
+### Tes & Lint
+```bash
+./gradlew lint testDebugUnitTest assembleDebug
+```
+
+---
+
+## Cara Install
+
+1. Unduh APK dari halaman [Releases](../../releases) (dibuat otomatis oleh CI pada tag `v*`), atau ambil artifact debug dari run GitHub Actions.
+2. Di Android, izinkan instalasi dari sumber ini ("Install unknown apps"), lalu buka APK.
+3. Atau via ADB: `adb install -r app-release.apk`.
+
+Android 7.0 (API 24) atau lebih baru. Asal bundle web: [BUNDLE.md](app/src/main/assets/web/BUNDLE.md).
 
 ---
 
