@@ -4,6 +4,15 @@ Semua perubahan penting pada proyek **PdfCraft Android** didokumentasikan dalam 
 
 ---
 
+## [2026.10.16.2] - 2026-10-16
+
+### Navigasi & UX Exit Aplikasi
+- **Double Back to Exit di Beranda:** Menambahkan proteksi keluar aplikasi saat berada di beranda (home), di mana pengguna harus menekan tombol kembali 2x dalam jeda waktu 2 detik untuk keluar dari aplikasi.
+- **Flash Info (Toast):** Memberikan pemberitahuan flash info "Tekan sekali lagi untuk keluar" saat penekanan tombol kembali pertama kali di beranda agar pengguna paham dan mencegah aplikasi tertutup tanpa sengaja.
+- **Pembersihan Riwayat Navigasi WebView:** Menghapus riwayat navigasi (`clearHistory`) saat kembali dari dokumen ke beranda untuk mencegah desinkronisasi tumpukan navigasi Android.
+
+---
+
 ## [2026.10.14.1] - 2026-10-14
 
 ### Perbaikan & Peningkatan Navigasi Mobile
